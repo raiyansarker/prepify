@@ -13,6 +13,8 @@ import {
   useQueryClient,
   keepPreviousData,
 } from "@tanstack/react-query";
+import { useChat } from "@ai-sdk/react";
+import { TextStreamChatTransport, type UIMessage } from "ai";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Add01Icon,
@@ -91,6 +93,55 @@ type Document = {
 };
 
 // ============================================
+// Helpers
+// ============================================
+
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
+
+/** Convert a server Message to a UIMessage for useChat */
+function toUIMessage(msg: Message): UIMessage {
+  return {
+    id: msg.id,
+    role: msg.role,
+    parts: [{ type: "text" as const, text: msg.content }],
+  };
+}
+
+/** Extract plain text content from a UIMessage */
+function getTextContent(message: UIMessage): string {
+  return message.parts
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("");
+}
+
+/** Normalize date fields on a conversation (guards against non-string values) */
+function normalizeConversation(c: Conversation): Conversation {
+  return {
+    ...c,
+    createdAt:
+      typeof c.createdAt === "string"
+        ? c.createdAt
+        : new Date(c.createdAt).toISOString(),
+    updatedAt:
+      typeof c.updatedAt === "string"
+        ? c.updatedAt
+        : new Date(c.updatedAt).toISOString(),
+  };
+}
+
+/** Normalize date fields on a message */
+function normalizeMessage(m: Message): Message {
+  return {
+    ...m,
+    createdAt:
+      typeof m.createdAt === "string"
+        ? m.createdAt
+        : new Date(m.createdAt).toISOString(),
+  };
+}
+
+// ============================================
 // Main Chat Page
 // ============================================
 
@@ -111,14 +162,8 @@ function ChatPage() {
     [navigate],
   );
 
-  // Input state
+  // Input state (useChat v6 has no built-in input management)
   const [inputValue, setInputValue] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [streamingContent, setStreamingContent] = useState("");
-
-  // Optimistic messages
-  const [pendingMessages, setPendingMessages] = useState<Message[]>([]);
-  const pendingIdsRef = useRef<Set<string>>(new Set());
 
   // Document scope state
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
@@ -140,32 +185,73 @@ function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const fullContentRef = useRef("");
+
+  // Keep dynamic values in refs so the transport closures always see the latest
+  const activeConversationIdRef = useRef(activeConversationId);
+  activeConversationIdRef.current = activeConversationId;
+
+  const selectedDocumentIdsRef = useRef(selectedDocumentIds);
+  selectedDocumentIdsRef.current = selectedDocumentIds;
+
+  // ============================================
+  // useChat with TextStreamChatTransport
+  // ============================================
+
+  const chat = useChat({
+    transport: useMemo(
+      () =>
+        new TextStreamChatTransport({
+          api: `${API_URL}/chat/conversations/_/messages`,
+          headers: (): Record<string, string> => {
+            const token = window.__clerk_token;
+            if (token) return { Authorization: `Bearer ${token}` };
+            return {};
+          },
+          prepareSendMessagesRequest: ({ messages, headers, credentials }) => {
+            const docIds = selectedDocumentIdsRef.current;
+            return {
+              body: {
+                messages: messages.map((m) => ({
+                  id: m.id,
+                  role: m.role,
+                  content: m.parts
+                    .filter(
+                      (p): p is { type: "text"; text: string } =>
+                        p.type === "text",
+                    )
+                    .map((p) => p.text)
+                    .join(""),
+                })),
+                ...(docIds.length > 0 ? { documentIds: docIds } : {}),
+              },
+              headers,
+              credentials,
+              api: `${API_URL}/chat/conversations/${activeConversationIdRef.current}/messages`,
+            };
+          },
+        }),
+      [],
+    ),
+    onFinish: () => {
+      // Sync server state after streaming completes
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      if (activeConversationIdRef.current) {
+        queryClient.invalidateQueries({
+          queryKey: ["messages", activeConversationIdRef.current],
+        });
+      }
+    },
+    onError: (error) => {
+      console.error("Chat error:", error);
+    },
+  });
+
+  const isStreaming =
+    chat.status === "streaming" || chat.status === "submitted";
 
   // ============================================
   // Data fetching
   // ============================================
-
-  const normalizeConversation = (c: Conversation): Conversation => ({
-    ...c,
-    createdAt:
-      typeof c.createdAt === "string"
-        ? c.createdAt
-        : new Date(c.createdAt).toISOString(),
-    updatedAt:
-      typeof c.updatedAt === "string"
-        ? c.updatedAt
-        : new Date(c.updatedAt).toISOString(),
-  });
-
-  const normalizeMessage = (m: Message): Message => ({
-    ...m,
-    createdAt:
-      typeof m.createdAt === "string"
-        ? m.createdAt
-        : new Date(m.createdAt).toISOString(),
-  });
 
   const { data: conversations = [], isLoading: isLoadingConversations } =
     useQuery({
@@ -179,11 +265,7 @@ function ChatPage() {
       },
     });
 
-  const {
-    data: serverMessages = [],
-    isLoading: isLoadingMessages,
-    isFetching: isFetchingMessages,
-  } = useQuery({
+  const { data: serverMessages = [], isLoading: isLoadingMessages } = useQuery({
     queryKey: ["messages", activeConversationId],
     queryFn: async () => {
       if (!activeConversationId) return [];
@@ -197,28 +279,25 @@ function ChatPage() {
       return [];
     },
     enabled: !!activeConversationId,
-    // Keep showing previous messages while refetching so the loading
-    // indicator doesn't flash after streaming completes
     placeholderData: keepPreviousData,
   });
 
-  // Only show loading state on first load, not refetches
-  const showMessagesLoading = isLoadingMessages && !isFetchingMessages;
+  // Only show loading state on the very first load (no cached data yet)
+  const showMessagesLoading = isLoadingMessages;
 
-  // Combine server + pending messages
-  const messages = useMemo(() => {
-    if (pendingMessages.length === 0) return serverMessages;
-
-    const seen = new Set(
-      serverMessages.map((sm) => `${sm.role}:${sm.content.trim()}`),
-    );
-
-    const uniquePending = pendingMessages.filter(
-      (pm) => !seen.has(`${pm.role}:${pm.content.trim()}`),
-    );
-
-    return [...serverMessages, ...uniquePending];
-  }, [serverMessages, pendingMessages]);
+  // Sync server messages into useChat when they change or conversation switches.
+  // We use a ref to track the last synced data and avoid re-calling setMessages
+  // when the array reference changes but the data hasn't (which causes infinite loops).
+  const lastSyncedRef = useRef<string>("");
+  useEffect(() => {
+    if (isStreaming) return;
+    const key =
+      activeConversationId + ":" + serverMessages.map((m) => m.id).join(",");
+    if (key === lastSyncedRef.current) return;
+    lastSyncedRef.current = key;
+    chat.setMessages(serverMessages.map(toUIMessage));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chat.setMessages is stable; including `chat` would loop
+  }, [serverMessages, activeConversationId, isStreaming]);
 
   const filteredConversations = useMemo(() => {
     if (!searchQuery.trim()) return conversations;
@@ -239,17 +318,15 @@ function ChatPage() {
     },
   });
 
-  // Clear pending on conversation change
-  useEffect(() => {
-    setPendingMessages([]);
-    pendingIdsRef.current.clear();
-  }, [activeConversationId]);
-
   // Scroll to bottom on new messages / streaming
-  const messageCount = messages.length;
+  const messageCount = chat.messages.length;
+  const lastMessageText =
+    chat.messages.length > 0
+      ? getTextContent(chat.messages[chat.messages.length - 1])
+      : "";
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messageCount, streamingContent]);
+  }, [messageCount, lastMessageText, chat.status]);
 
   // Track scroll position for scroll-to-bottom button
   useEffect(() => {
@@ -266,9 +343,9 @@ function ChatPage() {
     return () => container.removeEventListener("scroll", handleScroll);
   }, []);
 
-  const scrollToBottom = useCallback(() => {
+  const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, []);
+  };
 
   // ============================================
   // Conversation mutations
@@ -285,8 +362,7 @@ function ChatPage() {
     onSuccess: (conversation) => {
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
       setActiveConversationId(conversation.id);
-      setPendingMessages([]);
-      pendingIdsRef.current.clear();
+      chat.setMessages([]);
       inputRef.current?.focus();
     },
   });
@@ -319,8 +395,7 @@ function ChatPage() {
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
       if (activeConversationId === deletedId) {
         setActiveConversationId(null);
-        setPendingMessages([]);
-        pendingIdsRef.current.clear();
+        chat.setMessages([]);
       }
       setDeleteConversationId(null);
     },
@@ -330,10 +405,10 @@ function ChatPage() {
   });
 
   // ============================================
-  // Send message with streaming
+  // Send message
   // ============================================
 
-  const sendMessage = useCallback(async () => {
+  const handleSendMessage = async () => {
     if (!inputValue.trim() || isStreaming) return;
 
     let conversationId = activeConversationId;
@@ -348,6 +423,8 @@ function ChatPage() {
           );
           queryClient.invalidateQueries({ queryKey: ["conversations"] });
           conversationId = conversation.id;
+          // Update ref immediately so the transport uses the new ID
+          activeConversationIdRef.current = conversationId;
           setActiveConversationId(conversationId);
         }
       } catch {
@@ -357,27 +434,10 @@ function ChatPage() {
 
     if (!conversationId) return;
 
-    const userMessageId = crypto.randomUUID();
-    const userMessage: Message = {
-      id: userMessageId,
-      role: "user",
-      content: inputValue.trim(),
-      createdAt: new Date().toISOString(),
-    };
-
-    pendingIdsRef.current.add(userMessageId);
-    setPendingMessages((prev) => [...prev, userMessage]);
     const messageText = inputValue.trim();
-    setInputValue("");
-    setIsStreaming(true);
-    setStreamingContent("");
-
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-    });
 
     // Optimistic auto-title for first message
-    if (serverMessages.length === 0 && pendingMessages.length === 0) {
+    if (serverMessages.length === 0 && chat.messages.length === 0) {
       const autoTitle =
         messageText.length > 60
           ? messageText.slice(0, 57) + "..."
@@ -389,144 +449,42 @@ function ChatPage() {
       );
     }
 
-    try {
-      const abortController = new AbortController();
-      abortControllerRef.current = abortController;
+    setInputValue("");
 
-      const token = window.__clerk_token;
-      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:3001";
-
-      const response = await fetch(
-        `${apiUrl}/chat/conversations/${conversationId}/messages`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({
-            message: messageText,
-            ...(selectedDocumentIds.length > 0
-              ? { documentIds: selectedDocumentIds }
-              : {}),
-          }),
-          signal: abortController.signal,
-        },
-      );
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("No response body");
-
-      const decoder = new TextDecoder();
-      let fullContent = "";
-      fullContentRef.current = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value, { stream: true });
-        fullContent += chunk;
-        fullContentRef.current = fullContent;
-        setStreamingContent(fullContent);
-      }
-
-      // Add the complete assistant message to pending
-      const assistantMessageId = crypto.randomUUID();
-      const assistantMessage: Message = {
-        id: assistantMessageId,
-        role: "assistant",
-        content: fullContent,
-        createdAt: new Date().toISOString(),
-      };
-
-      pendingIdsRef.current.add(assistantMessageId);
-      setPendingMessages((prev) => [...prev, assistantMessage]);
-      setStreamingContent("");
-
-      // Wait for server to persist, then sync
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      await queryClient.invalidateQueries({
-        queryKey: ["messages", conversationId],
-      });
-      setPendingMessages([]);
-      pendingIdsRef.current.clear();
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        const currentStreaming = fullContentRef.current;
-        if (currentStreaming) {
-          const partialMessage: Message = {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: currentStreaming + "\n\n_(response cancelled)_",
-            createdAt: new Date().toISOString(),
-          };
-          setPendingMessages((prev) => [...prev, partialMessage]);
-        }
-      } else {
-        const errorMessage: Message = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content:
-            "Sorry, I encountered an error processing your request. Please try again.",
-          createdAt: new Date().toISOString(),
-        };
-        setPendingMessages((prev) => [...prev, errorMessage]);
-      }
-      setStreamingContent("");
-    } finally {
-      setIsStreaming(false);
-      abortControllerRef.current = null;
-      requestAnimationFrame(() => {
-        inputRef.current?.focus();
-      });
-    }
-  }, [
-    inputValue,
-    isStreaming,
-    activeConversationId,
-    serverMessages.length,
-    pendingMessages.length,
-    selectedDocumentIds,
-    queryClient,
-    setActiveConversationId,
-  ]);
-
-  const cancelStreaming = useCallback(() => {
-    abortControllerRef.current?.abort();
-  }, []);
+    // Send via useChat — it handles optimistic user message + streaming
+    chat.sendMessage({ text: messageText });
+  };
 
   // ============================================
   // Document scope
   // ============================================
 
-  const toggleDocumentScope = useCallback((docId: string) => {
+  const toggleDocumentScope = (docId: string) => {
     setSelectedDocumentIds((prev) =>
       prev.includes(docId)
         ? prev.filter((id) => id !== docId)
         : [...prev, docId],
     );
-  }, []);
+  };
+
+  // ============================================
+  // Keep textarea focused after sends / re-renders
+  // ============================================
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, [chat.status, activeConversationId]);
 
   // ============================================
   // Keyboard shortcuts
   // ============================================
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-      }
-    },
-    [sendMessage],
-  );
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
 
   // Group conversations by time period
   const groupedConversations = useMemo(() => {
@@ -753,7 +711,7 @@ function ChatPage() {
             ref={messagesContainerRef}
             className="relative flex-1 overflow-y-auto"
           >
-            {!activeConversationId && messages.length === 0 ? (
+            {!activeConversationId && chat.messages.length === 0 ? (
               /* Empty state */
               <div className="flex h-full flex-col items-center justify-center px-4">
                 <div className="flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5">
@@ -803,25 +761,20 @@ function ChatPage() {
                   </div>
                 ) : (
                   <div className="space-y-6">
-                    {messages.map((message) => (
-                      <ChatMessage key={message.id} message={message} />
+                    {chat.messages.map((message, index) => (
+                      <ChatMessage
+                        key={message.id}
+                        message={message}
+                        isStreaming={
+                          chat.status === "streaming" &&
+                          message.role === "assistant" &&
+                          index === chat.messages.length - 1
+                        }
+                      />
                     ))}
 
-                    {/* Streaming response */}
-                    {isStreaming && streamingContent && (
-                      <ChatMessage
-                        message={{
-                          id: "streaming",
-                          role: "assistant",
-                          content: streamingContent,
-                          createdAt: new Date().toISOString(),
-                        }}
-                        isStreaming
-                      />
-                    )}
-
                     {/* Typing indicator - before first token arrives */}
-                    {isStreaming && !streamingContent && (
+                    {chat.status === "submitted" && (
                       <div className="flex gap-4">
                         <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
                           <HugeiconsIcon
@@ -876,9 +829,8 @@ function ChatPage() {
                       ? "Message Prepify..."
                       : "Start a new conversation..."
                   }
-                  disabled={isStreaming}
                   rows={1}
-                  className="block w-full resize-none bg-transparent px-4 pt-3 pb-10 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  className="block w-full resize-none bg-transparent px-4 pt-3 pb-10 text-sm outline-none placeholder:text-muted-foreground"
                   style={
                     {
                       fieldSizing: "content",
@@ -891,7 +843,7 @@ function ChatPage() {
                     <Button
                       variant="outline"
                       size="icon-sm"
-                      onClick={cancelStreaming}
+                      onClick={() => chat.stop()}
                       title="Stop generating"
                       className="rounded-lg"
                     >
@@ -904,7 +856,7 @@ function ChatPage() {
                   ) : (
                     <Button
                       size="icon-sm"
-                      onClick={sendMessage}
+                      onClick={handleSendMessage}
                       disabled={!inputValue.trim()}
                       title="Send message"
                       className="rounded-lg"
@@ -1082,10 +1034,11 @@ function ChatMessage({
   message,
   isStreaming = false,
 }: {
-  message: Message;
+  message: UIMessage;
   isStreaming?: boolean;
 }) {
   const isUser = message.role === "user";
+  const content = getTextContent(message);
 
   return (
     <div className="flex gap-4">
@@ -1117,7 +1070,7 @@ function ChatMessage({
           {isUser ? "You" : "Prepify AI"}
         </p>
         <div className="text-sm leading-relaxed">
-          <MessageContent content={message.content} />
+          <MessageContent content={content} />
           {isStreaming && (
             <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-primary align-text-bottom" />
           )}
