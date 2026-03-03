@@ -47,7 +47,7 @@ export const SM2_DEFAULT_INTERVAL = 1; // days
 // RAG / Embedding
 // ============================================
 
-export const EMBEDDING_DIMENSIONS = 1024;
+export const EMBEDDING_DIMENSIONS = 768;
 export const CHUNK_SIZE = 1000; // characters
 export const CHUNK_OVERLAP = 200; // characters
 export const MAX_CONTEXT_CHUNKS = 10;
