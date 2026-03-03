@@ -13,9 +13,9 @@ import { uploadRouter } from "#/lib/upload";
 // causing "Body already used" errors.
 
 export const uploadRoutes = new Elysia({ prefix: "/upload" })
-  .get("/", ({ request }) =>
-    uploadRouter.handlers.GET(request.clone() as unknown as Request),
-  )
-  .post("/", ({ request }) =>
-    uploadRouter.handlers.POST(request.clone() as unknown as Request),
-  );
+  .get("/", ({ request }) => uploadRouter.handlers.GET(request), {
+    parse: "none",
+  })
+  .post("/", ({ request }) => uploadRouter.handlers.POST(request), {
+    parse: "none",
+  });
