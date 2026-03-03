@@ -1,4 +1,5 @@
 import { Elysia, t } from "elysia";
+import { Effect } from "effect";
 import { eq, and, desc } from "drizzle-orm";
 import { streamText } from "ai";
 import { createGroq } from "@ai-sdk/groq";
@@ -7,6 +8,9 @@ import { chatConversations, chatMessages, documents } from "#/db/schema";
 import { requireAuth } from "#/middleware/auth";
 import { findSimilarChunks, buildContextFromChunks } from "#/lib/similarity";
 import { chatLogger } from "#/lib/logger";
+import { env } from "#/lib/env";
+import { DatabaseError, NotFoundError, ValidationError } from "#/lib/errors";
+import { effectHandler } from "#/services/runtime";
 
 type Auth = { userId: string };
 
@@ -15,8 +19,159 @@ type Auth = { userId: string };
 // ============================================
 
 const groq = createGroq({
-  apiKey: process.env.GROQ_API_KEY,
+  apiKey: env().ai.groqApiKey,
 });
+
+// ============================================
+// DB helpers wrapped in Effect
+// ============================================
+
+const queryConversations = (userId: string) =>
+  Effect.tryPromise({
+    try: () =>
+      db.query.chatConversations.findMany({
+        where: eq(chatConversations.userId, userId),
+        orderBy: [desc(chatConversations.updatedAt)],
+      }),
+    catch: (cause) =>
+      new DatabaseError({ message: "Failed to query conversations", cause }),
+  });
+
+const findConversation = (conversationId: string, userId: string) =>
+  Effect.tryPromise({
+    try: () =>
+      db.query.chatConversations.findFirst({
+        where: and(
+          eq(chatConversations.id, conversationId),
+          eq(chatConversations.userId, userId),
+        ),
+      }),
+    catch: (cause) =>
+      new DatabaseError({ message: "Failed to find conversation", cause }),
+  });
+
+const findConversationWithMessages = (conversationId: string, userId: string) =>
+  Effect.tryPromise({
+    try: () =>
+      db.query.chatConversations.findFirst({
+        where: and(
+          eq(chatConversations.id, conversationId),
+          eq(chatConversations.userId, userId),
+        ),
+        with: {
+          messages: {
+            orderBy: [desc(chatMessages.createdAt)],
+          },
+        },
+      }),
+    catch: (cause) =>
+      new DatabaseError({
+        message: "Failed to find conversation with messages",
+        cause,
+      }),
+  });
+
+const insertConversation = (userId: string, title: string) =>
+  Effect.tryPromise({
+    try: () =>
+      db.insert(chatConversations).values({ userId, title }).returning(),
+    catch: (cause) =>
+      new DatabaseError({ message: "Failed to create conversation", cause }),
+  });
+
+const updateConversation = (
+  conversationId: string,
+  data: Record<string, unknown>,
+) =>
+  Effect.tryPromise({
+    try: () =>
+      db
+        .update(chatConversations)
+        .set(data)
+        .where(eq(chatConversations.id, conversationId))
+        .returning(),
+    catch: (cause) =>
+      new DatabaseError({ message: "Failed to update conversation", cause }),
+  });
+
+const deleteConversation = (conversationId: string) =>
+  Effect.tryPromise({
+    try: () =>
+      db
+        .delete(chatConversations)
+        .where(eq(chatConversations.id, conversationId)),
+    catch: (cause) =>
+      new DatabaseError({ message: "Failed to delete conversation", cause }),
+  });
+
+const insertChatMessage = (
+  conversationId: string,
+  role: "user" | "assistant" | "system",
+  content: string,
+) =>
+  Effect.tryPromise({
+    try: () =>
+      db
+        .insert(chatMessages)
+        .values({ conversationId, role, content })
+        .returning(),
+    catch: (cause) =>
+      new DatabaseError({ message: "Failed to insert chat message", cause }),
+  });
+
+const queryUserDocumentIds = (userId: string) =>
+  Effect.tryPromise({
+    try: () =>
+      db.query.documents.findMany({
+        where: eq(documents.userId, userId),
+        columns: { id: true },
+      }),
+    catch: (cause) =>
+      new DatabaseError({ message: "Failed to query user documents", cause }),
+  });
+
+const countConversationMessages = (conversationId: string) =>
+  Effect.tryPromise({
+    try: () =>
+      db.query.chatMessages.findMany({
+        where: eq(chatMessages.conversationId, conversationId),
+        columns: { id: true },
+      }),
+    catch: (cause) =>
+      new DatabaseError({
+        message: "Failed to count conversation messages",
+        cause,
+      }),
+  });
+
+// ============================================
+// RAG retrieval wrapped in Effect (non-fatal)
+// ============================================
+
+const retrieveRagContext = (
+  userContent: string,
+  userId: string,
+  documentIds?: string[],
+) =>
+  Effect.tryPromise({
+    try: () =>
+      findSimilarChunks(userContent, userId, {
+        documentIds,
+        limit: 8,
+        minSimilarity: 0.3,
+      }),
+    catch: (cause) => cause,
+  }).pipe(
+    Effect.map((chunks) => buildContextFromChunks(chunks)),
+    Effect.catchAll((error) =>
+      Effect.gen(function* () {
+        yield* Effect.logWarning(
+          "RAG retrieval failed, proceeding without context",
+        ).pipe(Effect.annotateLogs("error", String(error)));
+        return "";
+      }),
+    ),
+  );
 
 // ============================================
 // System prompt builder
@@ -54,15 +209,13 @@ export const chatRoutes = new Elysia({ prefix: "/chat" })
   .get("/conversations", async (ctx) => {
     const auth = (ctx as unknown as { auth: Auth }).auth;
 
-    const conversations = await db.query.chatConversations.findMany({
-      where: eq(chatConversations.userId, auth.userId),
-      orderBy: [desc(chatConversations.updatedAt)],
-    });
-
-    return {
-      success: true as const,
-      data: conversations,
-    };
+    return effectHandler(
+      ctx,
+      Effect.gen(function* () {
+        const conversations = yield* queryConversations(auth.userId);
+        return { success: true as const, data: conversations };
+      }),
+    );
   })
 
   // Get a single conversation with its messages
@@ -71,31 +224,31 @@ export const chatRoutes = new Elysia({ prefix: "/chat" })
     async (ctx) => {
       const auth = (ctx as unknown as { auth: Auth }).auth;
 
-      const conversation = await db.query.chatConversations.findFirst({
-        where: and(
-          eq(chatConversations.id, ctx.params.id),
-          eq(chatConversations.userId, auth.userId),
-        ),
-        with: {
-          messages: {
-            orderBy: [desc(chatMessages.createdAt)],
-          },
-        },
-      });
+      return effectHandler(
+        ctx,
+        Effect.gen(function* () {
+          const conversation = yield* findConversationWithMessages(
+            ctx.params.id,
+            auth.userId,
+          );
 
-      if (!conversation) {
-        ctx.set.status = 404;
-        return { success: false as const, error: "Conversation not found" };
-      }
+          if (!conversation) {
+            return yield* new NotFoundError({
+              entity: "Conversation",
+              id: ctx.params.id,
+            });
+          }
 
-      // Return messages in chronological order (oldest first)
-      return {
-        success: true as const,
-        data: {
-          ...conversation,
-          messages: conversation.messages.reverse(),
-        },
-      };
+          // Return messages in chronological order (oldest first)
+          return {
+            success: true as const,
+            data: {
+              ...conversation,
+              messages: conversation.messages.reverse(),
+            },
+          };
+        }),
+      );
     },
     {
       params: t.Object({
@@ -110,18 +263,20 @@ export const chatRoutes = new Elysia({ prefix: "/chat" })
     async (ctx) => {
       const auth = (ctx as unknown as { auth: Auth }).auth;
 
-      const [conversation] = await db
-        .insert(chatConversations)
-        .values({
-          userId: auth.userId,
-          title: ctx.body.title || "New Conversation",
-        })
-        .returning();
+      return effectHandler(
+        ctx,
+        Effect.gen(function* () {
+          const title = ctx.body.title || "New Conversation";
+          const results = yield* insertConversation(auth.userId, title);
+          const conversation = results[0]!;
 
-      return {
-        success: true as const,
-        data: conversation,
-      };
+          yield* Effect.logInfo("Conversation created").pipe(
+            Effect.annotateLogs("conversationId", conversation.id),
+          );
+
+          return { success: true as const, data: conversation };
+        }),
+      );
     },
     {
       body: t.Object({
@@ -136,31 +291,34 @@ export const chatRoutes = new Elysia({ prefix: "/chat" })
     async (ctx) => {
       const auth = (ctx as unknown as { auth: Auth }).auth;
 
-      const conversation = await db.query.chatConversations.findFirst({
-        where: and(
-          eq(chatConversations.id, ctx.params.id),
-          eq(chatConversations.userId, auth.userId),
-        ),
-      });
+      return effectHandler(
+        ctx,
+        Effect.gen(function* () {
+          const conversation = yield* findConversation(
+            ctx.params.id,
+            auth.userId,
+          );
 
-      if (!conversation) {
-        ctx.set.status = 404;
-        return { success: false as const, error: "Conversation not found" };
-      }
+          if (!conversation) {
+            return yield* new NotFoundError({
+              entity: "Conversation",
+              id: ctx.params.id,
+            });
+          }
 
-      const [updated] = await db
-        .update(chatConversations)
-        .set({
-          title: ctx.body.title,
-          updatedAt: new Date(),
-        })
-        .where(eq(chatConversations.id, ctx.params.id))
-        .returning();
+          const results = yield* updateConversation(ctx.params.id, {
+            title: ctx.body.title,
+            updatedAt: new Date(),
+          });
+          const updated = results[0]!;
 
-      return {
-        success: true as const,
-        data: updated,
-      };
+          yield* Effect.logInfo("Conversation renamed").pipe(
+            Effect.annotateLogs("conversationId", ctx.params.id),
+          );
+
+          return { success: true as const, data: updated };
+        }),
+      );
     },
     {
       params: t.Object({
@@ -178,26 +336,30 @@ export const chatRoutes = new Elysia({ prefix: "/chat" })
     async (ctx) => {
       const auth = (ctx as unknown as { auth: Auth }).auth;
 
-      const conversation = await db.query.chatConversations.findFirst({
-        where: and(
-          eq(chatConversations.id, ctx.params.id),
-          eq(chatConversations.userId, auth.userId),
-        ),
-      });
+      return effectHandler(
+        ctx,
+        Effect.gen(function* () {
+          const conversation = yield* findConversation(
+            ctx.params.id,
+            auth.userId,
+          );
 
-      if (!conversation) {
-        ctx.set.status = 404;
-        return { success: false as const, error: "Conversation not found" };
-      }
+          if (!conversation) {
+            return yield* new NotFoundError({
+              entity: "Conversation",
+              id: ctx.params.id,
+            });
+          }
 
-      await db
-        .delete(chatConversations)
-        .where(eq(chatConversations.id, ctx.params.id));
+          yield* deleteConversation(ctx.params.id);
 
-      return {
-        success: true as const,
-        data: { id: ctx.params.id },
-      };
+          yield* Effect.logInfo("Conversation deleted").pipe(
+            Effect.annotateLogs("conversationId", ctx.params.id),
+          );
+
+          return { success: true as const, data: { id: ctx.params.id } };
+        }),
+      );
     },
     {
       params: t.Object({
@@ -213,114 +375,113 @@ export const chatRoutes = new Elysia({ prefix: "/chat" })
     async (ctx) => {
       const auth = (ctx as unknown as { auth: Auth }).auth;
 
-      // 1. Verify conversation belongs to user
-      const conversation = await db.query.chatConversations.findFirst({
-        where: and(
-          eq(chatConversations.id, ctx.params.id),
-          eq(chatConversations.userId, auth.userId),
-        ),
-      });
+      // Pre-stream work runs through Effect to get proper error handling.
+      // If any pre-stream step fails, effectHandler returns an error response.
+      // On success, we get the data needed to start the stream.
+      const preStreamResult = await effectHandler(
+        ctx,
+        Effect.gen(function* () {
+          // 1. Verify conversation belongs to user
+          const conversation = yield* findConversation(
+            ctx.params.id,
+            auth.userId,
+          );
 
-      if (!conversation) {
-        ctx.set.status = 404;
-        return { success: false as const, error: "Conversation not found" };
-      }
+          if (!conversation) {
+            return yield* new NotFoundError({
+              entity: "Conversation",
+              id: ctx.params.id,
+            });
+          }
 
-      // 2. Validate document scope (if provided)
-      if (ctx.body.documentIds && ctx.body.documentIds.length > 0) {
-        const userDocs = await db.query.documents.findMany({
-          where: and(eq(documents.userId, auth.userId)),
-          columns: { id: true },
-        });
-        const userDocIds = new Set(userDocs.map((d) => d.id));
-        const invalidIds = ctx.body.documentIds.filter(
-          (id) => !userDocIds.has(id),
-        );
-        if (invalidIds.length > 0) {
-          ctx.set.status = 400;
-          return {
-            success: false as const,
-            error: "Some document IDs are invalid",
+          // 2. Validate document scope (if provided)
+          if (ctx.body.documentIds && ctx.body.documentIds.length > 0) {
+            const userDocs = yield* queryUserDocumentIds(auth.userId);
+            const userDocIds = new Set(userDocs.map((d) => d.id));
+            const invalidIds = ctx.body.documentIds.filter(
+              (id) => !userDocIds.has(id),
+            );
+            if (invalidIds.length > 0) {
+              return yield* new ValidationError({
+                message: "Some document IDs are invalid",
+                field: "documentIds",
+              });
+            }
+          }
+
+          // 3. Extract the latest user message
+          const incomingMessages = ctx.body.messages;
+          const lastUserMessage = [...incomingMessages]
+            .reverse()
+            .find((m) => m.role === "user");
+
+          if (!lastUserMessage) {
+            return yield* new ValidationError({
+              message: "No user message found",
+              field: "messages",
+            });
+          }
+
+          const userContent = lastUserMessage.content;
+
+          // 4. Save the user message to the database
+          yield* insertChatMessage(ctx.params.id, "user", userContent);
+
+          // 5. Update conversation timestamp and auto-title if first message
+          const existingMessages = yield* countConversationMessages(
+            ctx.params.id,
+          );
+
+          const updateData: Record<string, unknown> = {
+            updatedAt: new Date(),
           };
-        }
+
+          if (existingMessages.length <= 1) {
+            const autoTitle =
+              userContent.length > 60
+                ? userContent.slice(0, 57) + "..."
+                : userContent;
+            updateData.title = autoTitle;
+          }
+
+          yield* updateConversation(ctx.params.id, updateData);
+
+          // 6. Retrieve RAG context (non-fatal — falls back to empty string)
+          const context = yield* retrieveRagContext(
+            userContent,
+            auth.userId,
+            ctx.body.documentIds,
+          );
+
+          yield* Effect.logDebug("Chat pre-stream complete").pipe(
+            Effect.annotateLogs("conversationId", ctx.params.id),
+            Effect.annotateLogs(
+              "hasContext",
+              context.length > 0 ? "true" : "false",
+            ),
+          );
+
+          // Return data needed for streaming
+          return {
+            _ok: true as const,
+            context,
+            llmMessages: incomingMessages.map((msg) => ({
+              role: msg.role as "user" | "assistant" | "system",
+              content: msg.content,
+            })),
+          };
+        }),
+      );
+
+      // If pre-stream failed, effectHandler already set ctx.set.status and
+      // returned an error body — just return it as the response.
+      if (!preStreamResult || !("_ok" in preStreamResult)) {
+        return preStreamResult;
       }
 
-      // 3. Extract the latest user message from the messages array
-      const incomingMessages = ctx.body.messages;
-      const lastUserMessage = [...incomingMessages]
-        .reverse()
-        .find((m) => m.role === "user");
+      // 7. Stream AI response using the Data Stream protocol (for useChat)
+      const { context, llmMessages } = preStreamResult;
 
-      if (!lastUserMessage) {
-        ctx.set.status = 400;
-        return { success: false as const, error: "No user message found" };
-      }
-
-      const userContent = lastUserMessage.content;
-
-      // 4. Save the user message to the database
-      await db
-        .insert(chatMessages)
-        .values({
-          conversationId: ctx.params.id,
-          role: "user",
-          content: userContent,
-        })
-        .returning();
-
-      // 5. Update conversation timestamp and auto-title if first message
-      const existingMessages = await db.query.chatMessages.findMany({
-        where: eq(chatMessages.conversationId, ctx.params.id),
-        columns: { id: true },
-      });
-
-      const updateData: Record<string, unknown> = {
-        updatedAt: new Date(),
-      };
-
-      // Auto-title from first user message (truncate to 60 chars)
-      if (existingMessages.length <= 1) {
-        const autoTitle =
-          userContent.length > 60
-            ? userContent.slice(0, 57) + "..."
-            : userContent;
-        updateData.title = autoTitle;
-      }
-
-      await db
-        .update(chatConversations)
-        .set(updateData)
-        .where(eq(chatConversations.id, ctx.params.id));
-
-      // 6. Retrieve RAG context
-      let context = "";
-      try {
-        const similarChunks = await findSimilarChunks(
-          userContent,
-          auth.userId,
-          {
-            documentIds: ctx.body.documentIds,
-            limit: 8,
-            minSimilarity: 0.3,
-          },
-        );
-        context = buildContextFromChunks(similarChunks);
-      } catch (error) {
-        // RAG failure shouldn't block the chat - just proceed without context
-        chatLogger.error(
-          { err: error, conversationId: ctx.params.id },
-          "RAG retrieval failed",
-        );
-      }
-
-      // 7. Build messages for the LLM from the incoming messages array
-      // useChat sends the full conversation history, so we use it directly
-      const llmMessages = incomingMessages.map((msg) => ({
-        role: msg.role as "user" | "assistant" | "system",
-        content: msg.content,
-      }));
-
-      // 8. Stream AI response using the Data Stream protocol (for useChat)
       const result = streamText({
         model: groq("meta-llama/llama-4-scout-17b-16e-instruct"),
         system: buildSystemPrompt(context),
@@ -328,18 +489,26 @@ export const chatRoutes = new Elysia({ prefix: "/chat" })
         maxOutputTokens: 2048,
         temperature: 0.7,
         onFinish: async ({ text }) => {
-          // Save the assistant's response to the DB after streaming completes
-          await db.insert(chatMessages).values({
-            conversationId: ctx.params.id,
-            role: "assistant",
-            content: text,
-          });
+          // Save the assistant's response and update timestamp.
+          // This runs after the stream closes — errors here won't affect the
+          // client response, so we log them instead of throwing.
+          try {
+            await db.insert(chatMessages).values({
+              conversationId: ctx.params.id,
+              role: "assistant",
+              content: text,
+            });
 
-          // Update conversation timestamp
-          await db
-            .update(chatConversations)
-            .set({ updatedAt: new Date() })
-            .where(eq(chatConversations.id, ctx.params.id));
+            await db
+              .update(chatConversations)
+              .set({ updatedAt: new Date() })
+              .where(eq(chatConversations.id, ctx.params.id));
+          } catch (error) {
+            chatLogger.error(
+              { err: error, conversationId: ctx.params.id },
+              "Failed to save assistant message after stream",
+            );
+          }
         },
       });
 
