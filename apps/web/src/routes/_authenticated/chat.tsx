@@ -158,8 +158,18 @@ function ChatPage() {
     enabled: !!activeConversationId,
   });
 
-  // Combine server messages with optimistic pending messages from streaming
-  const messages = [...serverMessages, ...pendingMessages];
+  // Combine server messages with optimistic pending messages, deduplicating
+  // by role+content so that once the server returns the same messages we
+  // don't show them twice.
+  const messages = [
+    ...serverMessages,
+    ...pendingMessages.filter(
+      (pm) =>
+        !serverMessages.some(
+          (sm) => sm.role === pm.role && sm.content === pm.content,
+        ),
+    ),
+  ];
 
   const { data: documents = [] } = useQuery({
     queryKey: ["chat-documents"],
@@ -352,13 +362,17 @@ function ChatPage() {
       setPendingMessages([userMessage, assistantMessage]);
       setStreamingContent("");
 
-      // Refresh server data — once messages query refetches, pending will be
-      // cleared on next conversation switch or can be left as-is (they show
-      // the same content). We invalidate messages so next focus gets server IDs.
+      // Small delay to allow the server's onFinish handler to persist the
+      // assistant message before we refetch.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Refresh server data then clear pending messages so they aren't
+      // duplicated by the refetched server messages.
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
-      queryClient.invalidateQueries({
+      await queryClient.invalidateQueries({
         queryKey: ["messages", conversationId],
       });
+      setPendingMessages([]);
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         // User cancelled - add partial content as message
