@@ -1,6 +1,6 @@
 import { sql, eq, and, inArray } from "drizzle-orm";
 import { embed } from "ai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { db } from "#/db";
 import { documentChunks, documents } from "#/db/schema";
 import { MAX_CONTEXT_CHUNKS } from "@repo/shared";
@@ -9,12 +9,8 @@ import { MAX_CONTEXT_CHUNKS } from "@repo/shared";
 // Embedding provider for queries
 // ============================================
 
-const openrouter = createOpenAICompatible({
-  name: "openrouter",
-  baseURL: "https://openrouter.ai/api/v1",
-  headers: {
-    Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-  },
+const openrouter = createOpenRouter({
+  apiKey: process.env.OPENROUTER_API_KEY,
 });
 
 // ============================================

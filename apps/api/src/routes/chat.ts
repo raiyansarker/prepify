@@ -1,7 +1,7 @@
 import { Elysia, t } from "elysia";
 import { eq, and, desc } from "drizzle-orm";
 import { streamText } from "ai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { createGroq } from "@ai-sdk/groq";
 import { db } from "#/db";
 import { chatConversations, chatMessages, documents } from "#/db/schema";
 import { requireAuth } from "#/middleware/auth";
@@ -14,12 +14,8 @@ type Auth = { userId: string };
 // Groq provider for chat (direct, no Effect needed for streaming)
 // ============================================
 
-const groq = createOpenAICompatible({
-  name: "groq",
-  baseURL: "https://api.groq.com/openai/v1",
-  headers: {
-    Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-  },
+const groq = createGroq({
+  apiKey: process.env.GROQ_API_KEY,
 });
 
 // ============================================
@@ -322,13 +318,13 @@ export const chatRoutes = new Elysia({ prefix: "/chat" })
 
       // 7. Stream AI response
       const result = streamText({
-        model: groq.chatModel("meta-llama/llama-4-scout-17b-16e-instruct"),
+        model: groq("meta-llama/llama-4-scout-17b-16e-instruct"),
         system: buildSystemPrompt(context),
         messages: [
           ...historyMessages,
           { role: "user" as const, content: ctx.body.message },
         ],
-        maxTokens: 2048,
+        maxOutputTokens: 2048,
         temperature: 0.7,
         onFinish: async ({ text }) => {
           // Save the assistant's response to the DB after streaming completes

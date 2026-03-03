@@ -1,33 +1,27 @@
 import { Context, Effect, Layer } from "effect";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { createGroq } from "@ai-sdk/groq";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
 // ============================================
 // AI Service
 // ============================================
 
-export type AiProvider = ReturnType<typeof createOpenAICompatible>;
+export type GroqProvider = ReturnType<typeof createGroq>;
+export type OpenRouterProvider = ReturnType<typeof createOpenRouter>;
 
 export class AiService extends Context.Tag("AiService")<
   AiService,
   {
-    readonly provider: AiProvider;
-    readonly embeddingProvider: AiProvider;
+    readonly provider: GroqProvider;
+    readonly embeddingProvider: OpenRouterProvider;
   }
 >() {}
 
 export const AiServiceLive = Layer.succeed(AiService, {
-  provider: createOpenAICompatible({
-    name: "groq",
-    baseURL: "https://api.groq.com/openai/v1",
-    headers: {
-      Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-    },
+  provider: createGroq({
+    apiKey: process.env.GROQ_API_KEY,
   }),
-  embeddingProvider: createOpenAICompatible({
-    name: "openrouter",
-    baseURL: "https://openrouter.ai/api/v1",
-    headers: {
-      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-    },
+  embeddingProvider: createOpenRouter({
+    apiKey: process.env.OPENROUTER_API_KEY,
   }),
 });

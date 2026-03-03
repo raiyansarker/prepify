@@ -1,7 +1,8 @@
 import { Worker, type Job } from "bullmq";
 import { eq } from "drizzle-orm";
-import { generateText, embedMany, type CoreMessage } from "ai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { generateText, embedMany } from "ai";
+import { createGroq } from "@ai-sdk/groq";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { db } from "#/db";
 import { documents, documentChunks } from "#/db/schema";
 import { redisConnection } from "#/lib/redis";
@@ -14,20 +15,12 @@ import type { DocumentProcessingJob } from "@repo/shared";
 // AI Providers (standalone, not via Effect for worker)
 // ============================================
 
-const groq = createOpenAICompatible({
-  name: "groq",
-  baseURL: "https://api.groq.com/openai/v1",
-  headers: {
-    Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-  },
+const groq = createGroq({
+  apiKey: process.env.GROQ_API_KEY,
 });
 
-const openrouter = createOpenAICompatible({
-  name: "openrouter",
-  baseURL: "https://openrouter.ai/api/v1",
-  headers: {
-    Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-  },
+const openrouter = createOpenRouter({
+  apiKey: process.env.OPENROUTER_API_KEY,
 });
 
 // ============================================
@@ -56,21 +49,21 @@ async function extractTextFromDocument(
       model: openrouter("google/gemini-2.0-flash-001"),
       messages: [
         {
-          role: "user",
+          role: "user" as const,
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: "Extract ALL text content from this PDF document. Return ONLY the raw text, preserving the structure and paragraphs. Do not add commentary, summaries, or formatting instructions.",
             },
             {
-              type: "file",
+              type: "file" as const,
               data: buffer,
-              mimeType: "application/pdf",
+              mediaType: "application/pdf",
             },
           ],
         },
-      ] satisfies CoreMessage[],
-      maxTokens: 16000,
+      ],
+      maxOutputTokens: 16000,
     });
 
     return text;
@@ -95,7 +88,7 @@ async function extractTextFromDocument(
           ],
         },
       ],
-      maxTokens: 8000,
+      maxOutputTokens: 8000,
     });
 
     return text;
@@ -245,18 +238,4 @@ worker.on("error", (err) => {
   workerLogger.error({ err }, "Worker error");
 });
 
-// ============================================
-// Health check server on port 9000
-// ============================================
-
-const server = Bun.serve({
-  port: 9000,
-  fetch() {
-    return new Response(
-      JSON.stringify({ status: "ok", worker: "document-processing" }),
-      { headers: { "Content-Type": "application/json" } },
-    );
-  },
-});
-
-workerLogger.info({ port: server.port }, "Document processing worker running");
+workerLogger.info("Document processing worker running");
