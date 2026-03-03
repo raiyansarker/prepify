@@ -1,8 +1,7 @@
 import { Worker, type Job } from "bullmq";
 import { eq } from "drizzle-orm";
-import { generateText, embedMany } from "ai";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { createHuggingFace } from "@ai-sdk/huggingface";
+import { embedMany, generateText } from "ai";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { db } from "#/db";
 import { documents, documentChunks } from "#/db/schema";
 import { redisConnection } from "#/lib/redis";
@@ -15,18 +14,54 @@ import type { DocumentProcessingJob } from "@repo/shared";
 // AI Providers (standalone, not via Effect for worker)
 // ============================================
 
-const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY,
-});
-
-const huggingface = createHuggingFace({
-  apiKey: process.env.HUGGINGFACE_API_KEY,
+const google = createGoogleGenerativeAI({
+  apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
 });
 
 // ============================================
-// Text Extraction via AI
+// Text Extraction via Gemini
 // ============================================
 
+/**
+ * Extract text from an image or PDF buffer using Gemini.
+ * Gemini natively handles both images and multi-page PDFs.
+ */
+async function extractTextWithGemini(
+  fileBuffer: Buffer,
+  mimeType: string,
+): Promise<string> {
+  const { text } = await generateText({
+    model: google("gemini-2.5-flash"),
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "Extract all text from this document exactly as it appears. Preserve the original formatting, paragraphs, and structure. Return only the extracted text with no commentary, headers, or explanations.",
+          },
+          {
+            type: "file",
+            data: fileBuffer,
+            mediaType: mimeType as
+              | "application/pdf"
+              | "image/jpeg"
+              | "image/png"
+              | "image/gif"
+              | "image/webp",
+          },
+        ],
+      },
+    ],
+  });
+
+  return text.trim();
+}
+
+/**
+ * Main text extraction dispatcher — routes to the appropriate extractor
+ * based on the document's MIME type.
+ */
 async function extractTextFromDocument(
   url: string,
   mimeType: string,
@@ -37,59 +72,12 @@ async function extractTextFromDocument(
     return res.text();
   }
 
-  // For PDFs and images, fetch the file and use AI to extract text
+  // Fetch the file
   const res = await fetch(url);
   const buffer = Buffer.from(await res.arrayBuffer());
-  const base64 = buffer.toString("base64");
 
-  if (mimeType === "application/pdf") {
-    const { text } = await generateText({
-      model: openrouter("z-ai/glm-4.5-air:free"),
-      messages: [
-        {
-          role: "user" as const,
-          content: [
-            {
-              type: "text" as const,
-              text: "Extract ALL text content from this PDF document. Return ONLY the raw text, preserving the structure and paragraphs. Do not add commentary, summaries, or formatting instructions.",
-            },
-            {
-              type: "file" as const,
-              data: buffer,
-              mediaType: "application/pdf",
-            },
-          ],
-        },
-      ],
-      maxOutputTokens: 16000,
-    });
-
-    return text;
-  }
-
-  // For images, use OpenRouter with GLM-4.5
-  if (mimeType.startsWith("image/")) {
-    const { text } = await generateText({
-      model: openrouter("z-ai/glm-4.5-air:free"),
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: "Extract ALL text content visible in this image. If the image contains handwritten notes, diagrams with labels, or any readable text, transcribe it all. Return ONLY the raw text.",
-            },
-            {
-              type: "image",
-              image: `data:${mimeType};base64,${base64}`,
-            },
-          ],
-        },
-      ],
-      maxOutputTokens: 8000,
-    });
-
-    return text;
+  if (mimeType === "application/pdf" || mimeType.startsWith("image/")) {
+    return extractTextWithGemini(buffer, mimeType);
   }
 
   throw new Error(`Unsupported mime type: ${mimeType}`);
@@ -103,10 +91,11 @@ async function generateEmbeddings(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
 
   const { embeddings } = await embedMany({
-    model: huggingface.textEmbeddingModel(
-      "sentence-transformers/all-mpnet-base-v2",
-    ),
+    model: google.embeddingModel("gemini-embedding-001"),
     values: texts,
+    providerOptions: {
+      google: { outputDimensionality: 768 },
+    },
   });
 
   return embeddings;

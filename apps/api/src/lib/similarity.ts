@@ -1,6 +1,6 @@
 import { sql, eq, and, inArray } from "drizzle-orm";
 import { embed } from "ai";
-import { createHuggingFace } from "@ai-sdk/huggingface";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { db } from "#/db";
 import { documentChunks, documents } from "#/db/schema";
 import { MAX_CONTEXT_CHUNKS } from "@repo/shared";
@@ -9,8 +9,8 @@ import { MAX_CONTEXT_CHUNKS } from "@repo/shared";
 // Embedding provider for queries
 // ============================================
 
-const huggingface = createHuggingFace({
-  apiKey: process.env.HUGGINGFACE_API_KEY,
+const google = createGoogleGenerativeAI({
+  apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
 });
 
 // ============================================
@@ -55,10 +55,11 @@ export async function findSimilarChunks(
 
   // 1. Embed the query
   const { embedding: queryEmbedding } = await embed({
-    model: huggingface.textEmbeddingModel(
-      "sentence-transformers/all-mpnet-base-v2",
-    ),
+    model: google.embeddingModel("gemini-embedding-001"),
     value: query,
+    providerOptions: {
+      google: { outputDimensionality: 768 },
+    },
   });
 
   // 2. Build the vector similarity query
