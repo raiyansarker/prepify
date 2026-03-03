@@ -207,6 +207,7 @@ export const chatRoutes = new Elysia({ prefix: "/chat" })
   )
 
   // Send a message and get a streaming AI response
+  // Accepts the `useChat` protocol: { messages: [...], documentIds?: [...] }
   .post(
     "/conversations/:id/messages",
     async (ctx) => {
@@ -244,17 +245,30 @@ export const chatRoutes = new Elysia({ prefix: "/chat" })
         }
       }
 
-      // 3. Save the user message
-      const [userMessage] = await db
+      // 3. Extract the latest user message from the messages array
+      const incomingMessages = ctx.body.messages;
+      const lastUserMessage = [...incomingMessages]
+        .reverse()
+        .find((m) => m.role === "user");
+
+      if (!lastUserMessage) {
+        ctx.set.status = 400;
+        return { success: false as const, error: "No user message found" };
+      }
+
+      const userContent = lastUserMessage.content;
+
+      // 4. Save the user message to the database
+      await db
         .insert(chatMessages)
         .values({
           conversationId: ctx.params.id,
           role: "user",
-          content: ctx.body.message,
+          content: userContent,
         })
         .returning();
 
-      // 4. Update conversation timestamp and auto-title if first message
+      // 5. Update conversation timestamp and auto-title if first message
       const existingMessages = await db.query.chatMessages.findMany({
         where: eq(chatMessages.conversationId, ctx.params.id),
         columns: { id: true },
@@ -267,9 +281,9 @@ export const chatRoutes = new Elysia({ prefix: "/chat" })
       // Auto-title from first user message (truncate to 60 chars)
       if (existingMessages.length <= 1) {
         const autoTitle =
-          ctx.body.message.length > 60
-            ? ctx.body.message.slice(0, 57) + "..."
-            : ctx.body.message;
+          userContent.length > 60
+            ? userContent.slice(0, 57) + "..."
+            : userContent;
         updateData.title = autoTitle;
       }
 
@@ -278,11 +292,11 @@ export const chatRoutes = new Elysia({ prefix: "/chat" })
         .set(updateData)
         .where(eq(chatConversations.id, ctx.params.id));
 
-      // 5. Retrieve RAG context
+      // 6. Retrieve RAG context
       let context = "";
       try {
         const similarChunks = await findSimilarChunks(
-          ctx.body.message,
+          userContent,
           auth.userId,
           {
             documentIds: ctx.body.documentIds,
@@ -299,31 +313,18 @@ export const chatRoutes = new Elysia({ prefix: "/chat" })
         );
       }
 
-      // 6. Load conversation history (last 20 messages for context window)
-      const history = await db.query.chatMessages.findMany({
-        where: eq(chatMessages.conversationId, ctx.params.id),
-        orderBy: [desc(chatMessages.createdAt)],
-        limit: 20,
-      });
+      // 7. Build messages for the LLM from the incoming messages array
+      // useChat sends the full conversation history, so we use it directly
+      const llmMessages = incomingMessages.map((msg) => ({
+        role: msg.role as "user" | "assistant" | "system",
+        content: msg.content,
+      }));
 
-      // Reverse to chronological, exclude the message we just saved
-      // (it's already the last user message)
-      const historyMessages = history
-        .reverse()
-        .slice(0, -1) // remove the just-inserted user message (we'll add it explicitly)
-        .map((msg) => ({
-          role: msg.role as "user" | "assistant",
-          content: msg.content,
-        }));
-
-      // 7. Stream AI response
+      // 8. Stream AI response using the Data Stream protocol (for useChat)
       const result = streamText({
         model: groq("meta-llama/llama-4-scout-17b-16e-instruct"),
         system: buildSystemPrompt(context),
-        messages: [
-          ...historyMessages,
-          { role: "user" as const, content: ctx.body.message },
-        ],
+        messages: llmMessages,
         maxOutputTokens: 2048,
         temperature: 0.7,
         onFinish: async ({ text }) => {
@@ -342,7 +343,7 @@ export const chatRoutes = new Elysia({ prefix: "/chat" })
         },
       });
 
-      // Return a text stream response (works with any server framework)
+      // Return a plain text stream response (compatible with TextStreamChatTransport on the frontend)
       return result.toTextStreamResponse();
     },
     {
@@ -350,7 +351,13 @@ export const chatRoutes = new Elysia({ prefix: "/chat" })
         id: t.String(),
       }),
       body: t.Object({
-        message: t.String({ minLength: 1, maxLength: 10000 }),
+        messages: t.Array(
+          t.Object({
+            role: t.String(),
+            content: t.String(),
+            id: t.Optional(t.String()),
+          }),
+        ),
         documentIds: t.Optional(t.Array(t.String())),
       }),
     },

@@ -146,6 +146,7 @@ const worker = new Worker<DocumentProcessingJob>(
         doc.s3Url,
         doc.mimeType || "application/octet-stream",
       );
+      console.log("🚀 ~ extractedText:", extractedText);
 
       if (!extractedText.trim()) {
         throw new Error("No text could be extracted from document");
