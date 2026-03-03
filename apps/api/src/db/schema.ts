@@ -7,7 +7,6 @@ import {
   jsonb,
   real,
   index,
-  uniqueIndex,
   serial,
   varchar,
   pgEnum,
@@ -77,30 +76,6 @@ export const chatRoleEnum = pgEnum("chat_role", [
 ]);
 
 // ============================================
-// Users (synced from Clerk)
-// ============================================
-
-export const users = pgTable(
-  "users",
-  {
-    id: text("id")
-      .primaryKey()
-      .$defaultFn(() => crypto.randomUUID()),
-    clerkId: text("clerk_id").notNull().unique(),
-    email: text("email").notNull(),
-    name: text("name"),
-    avatar: text("avatar"),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [uniqueIndex("users_clerk_id_idx").on(table.clerkId)],
-);
-
-// ============================================
 // Folders (file manager grouping)
 // ============================================
 
@@ -110,9 +85,7 @@ export const folders = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
     name: text("name").notNull(),
     parentId: text("parent_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -138,9 +111,7 @@ export const documents = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
     folderId: text("folder_id").references(() => folders.id, {
       onDelete: "set null",
     }),
@@ -180,7 +151,7 @@ export const documentChunks = pgTable(
       .notNull()
       .references(() => documents.id, { onDelete: "cascade" }),
     content: text("content").notNull(),
-    embedding: vector("embedding", { dimensions: 1024 }),
+    embedding: vector("embedding", { dimensions: 768 }),
     chunkIndex: integer("chunk_index").notNull(),
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -206,9 +177,7 @@ export const exams = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
     title: text("title").notNull(),
     topic: text("topic").notNull(),
     type: examTypeEnum("type").notNull(),
@@ -297,9 +266,7 @@ export const examSessions = pgTable(
     examId: text("exam_id")
       .notNull()
       .references(() => exams.id, { onDelete: "cascade" }),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
     startedAt: timestamp("started_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -380,9 +347,7 @@ export const flashcardDecks = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
     title: text("title").notNull(),
     topic: text("topic").notNull(),
     description: text("description"),
@@ -464,9 +429,7 @@ export const chatConversations = pgTable(
     id: text("id")
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    userId: text("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
     title: text("title").notNull().default("New Conversation"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -506,20 +469,7 @@ export const chatMessages = pgTable(
 // Relations
 // ============================================
 
-export const usersRelations = relations(users, ({ many }) => ({
-  folders: many(folders),
-  documents: many(documents),
-  exams: many(exams),
-  examSessions: many(examSessions),
-  flashcardDecks: many(flashcardDecks),
-  chatConversations: many(chatConversations),
-}));
-
 export const foldersRelations = relations(folders, ({ one, many }) => ({
-  user: one(users, {
-    fields: [folders.userId],
-    references: [users.id],
-  }),
   parent: one(folders, {
     fields: [folders.parentId],
     references: [folders.id],
@@ -530,10 +480,6 @@ export const foldersRelations = relations(folders, ({ one, many }) => ({
 }));
 
 export const documentsRelations = relations(documents, ({ one, many }) => ({
-  user: one(users, {
-    fields: [documents.userId],
-    references: [users.id],
-  }),
   folder: one(folders, {
     fields: [documents.folderId],
     references: [folders.id],
@@ -550,11 +496,7 @@ export const documentChunksRelations = relations(documentChunks, ({ one }) => ({
   }),
 }));
 
-export const examsRelations = relations(exams, ({ one, many }) => ({
-  user: one(users, {
-    fields: [exams.userId],
-    references: [users.id],
-  }),
+export const examsRelations = relations(exams, ({ many }) => ({
   examDocuments: many(examDocuments),
   questions: many(questions),
   sessions: many(examSessions),
@@ -586,10 +528,6 @@ export const examSessionsRelations = relations(
       fields: [examSessions.examId],
       references: [exams.id],
     }),
-    user: one(users, {
-      fields: [examSessions.userId],
-      references: [users.id],
-    }),
     answers: many(answers),
     result: one(results),
   }),
@@ -615,11 +553,7 @@ export const resultsRelations = relations(results, ({ one }) => ({
 
 export const flashcardDecksRelations = relations(
   flashcardDecks,
-  ({ one, many }) => ({
-    user: one(users, {
-      fields: [flashcardDecks.userId],
-      references: [users.id],
-    }),
+  ({ many }) => ({
     flashcardDeckDocuments: many(flashcardDeckDocuments),
     flashcards: many(flashcards),
   }),
@@ -648,11 +582,7 @@ export const flashcardsRelations = relations(flashcards, ({ one }) => ({
 
 export const chatConversationsRelations = relations(
   chatConversations,
-  ({ one, many }) => ({
-    user: one(users, {
-      fields: [chatConversations.userId],
-      references: [users.id],
-    }),
+  ({ many }) => ({
     messages: many(chatMessages),
   }),
 );

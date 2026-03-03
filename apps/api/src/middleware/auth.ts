@@ -6,27 +6,34 @@ const clerkClient = createClerkClient({
   publishableKey: process.env.CLERK_PUBLISHABLE_KEY!,
 });
 
+export { clerkClient };
+
 export const authMiddleware = new Elysia({ name: "auth" }).derive(
-  { as: "scoped" },
-  async ({ request, set }) => {
-    const authResult = await clerkClient.authenticateRequest(request, {
+  { as: "global" },
+  async ({ request }) => {
+    // Create a minimal headers-only Request for Clerk authentication.
+    // Clerk only needs headers (Authorization / cookies) — passing the
+    // original request would consume the body ReadableStream, preventing
+    // Elysia from parsing it later on POST/PATCH/DELETE routes.
+    const authRequest = new Request(request.url, {
+      method: request.method,
+      headers: request.headers,
+    });
+
+    const authResult = await clerkClient.authenticateRequest(authRequest, {
       jwtKey: process.env.CLERK_JWT_KEY,
       authorizedParties: process.env.CLERK_AUTHORIZED_PARTIES?.split(","),
     });
 
     if (!authResult.isSignedIn) {
       return {
-        auth: null as {
-          userId: string;
-          clerkId: string;
-        } | null,
+        auth: null as { userId: string } | null,
       };
     }
 
     return {
       auth: {
         userId: authResult.toAuth().userId,
-        clerkId: authResult.toAuth().userId,
       },
     };
   },
@@ -38,7 +45,7 @@ export const authMiddleware = new Elysia({ name: "auth" }).derive(
  */
 export const requireAuth = new Elysia({ name: "requireAuth" })
   .use(authMiddleware)
-  .onBeforeHandle({ as: "scoped" }, ({ auth, set }) => {
+  .onBeforeHandle({ as: "global" }, ({ auth, set }) => {
     if (!auth) {
       set.status = 401;
       return {

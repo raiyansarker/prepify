@@ -25,7 +25,6 @@
     "effect": "^3.14.0",
     "elysia": "^1.2.25",
     "pushduck": "^0.3.1",
-    "svix": "^1.86.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
