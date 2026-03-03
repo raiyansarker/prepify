@@ -1,18 +1,35 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect, useRef, useCallback } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+  type ReactNode,
+} from "react";
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  keepPreviousData,
+} from "@tanstack/react-query";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
-  ChatBotIcon,
   Add01Icon,
   Delete02Icon,
   PencilEdit02Icon,
   SentIcon,
-  MoreVerticalIcon,
   Cancel01Icon,
   Tick02Icon,
   FileAttachmentIcon,
   Loading03Icon,
+  ArrowDown01Icon,
+  SparklesIcon,
+  UserIcon,
+  MoreHorizontalIcon,
+  Search01Icon,
+  SidebarLeftIcon,
+  StopIcon,
 } from "@hugeicons/core-free-icons";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
@@ -37,8 +54,15 @@ import { Badge } from "#/components/ui/badge";
 import { cn } from "#/lib/utils";
 import { api } from "#/lib/api";
 
+// ============================================
+// Route definition with search params
+// ============================================
+
 export const Route = createFileRoute("/_authenticated/chat")({
   component: ChatPage,
+  validateSearch: (search: Record<string, unknown>) => ({
+    conversationId: (search.conversationId as string) || undefined,
+  }),
 });
 
 // ============================================
@@ -72,19 +96,29 @@ type Document = {
 
 function ChatPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const { conversationId: activeConversationId } = Route.useSearch();
 
-  // Active conversation selection
-  const [activeConversationId, setActiveConversationId] = useState<
-    string | null
-  >(null);
+  // Helper to update the URL
+  const setActiveConversationId = useCallback(
+    (id: string | null) => {
+      navigate({
+        to: "/chat",
+        search: { conversationId: id ?? undefined },
+        replace: true,
+      });
+    },
+    [navigate],
+  );
 
   // Input state
   const [inputValue, setInputValue] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
 
-  // Optimistic messages appended during streaming (user msg + assistant msg)
+  // Optimistic messages
   const [pendingMessages, setPendingMessages] = useState<Message[]>([]);
+  const pendingIdsRef = useRef<Set<string>>(new Set());
 
   // Document scope state
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
@@ -99,15 +133,18 @@ function ChatPage() {
     string | null
   >(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showScrollButton, setShowScrollButton] = useState(false);
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const fullContentRef = useRef("");
 
   // ============================================
-  // Data fetching via TanStack Query
+  // Data fetching
   // ============================================
 
   const normalizeConversation = (c: Conversation): Conversation => ({
@@ -142,7 +179,11 @@ function ChatPage() {
       },
     });
 
-  const { data: serverMessages = [], isLoading: isLoadingMessages } = useQuery({
+  const {
+    data: serverMessages = [],
+    isLoading: isLoadingMessages,
+    isFetching: isFetchingMessages,
+  } = useQuery({
     queryKey: ["messages", activeConversationId],
     queryFn: async () => {
       if (!activeConversationId) return [];
@@ -156,20 +197,34 @@ function ChatPage() {
       return [];
     },
     enabled: !!activeConversationId,
+    // Keep showing previous messages while refetching so the loading
+    // indicator doesn't flash after streaming completes
+    placeholderData: keepPreviousData,
   });
 
-  // Combine server messages with optimistic pending messages, deduplicating
-  // by role+content so that once the server returns the same messages we
-  // don't show them twice.
-  const messages = [
-    ...serverMessages,
-    ...pendingMessages.filter(
-      (pm) =>
-        !serverMessages.some(
-          (sm) => sm.role === pm.role && sm.content === pm.content,
-        ),
-    ),
-  ];
+  // Only show loading state on first load, not refetches
+  const showMessagesLoading = isLoadingMessages && !isFetchingMessages;
+
+  // Combine server + pending messages
+  const messages = useMemo(() => {
+    if (pendingMessages.length === 0) return serverMessages;
+
+    const seen = new Set(
+      serverMessages.map((sm) => `${sm.role}:${sm.content.trim()}`),
+    );
+
+    const uniquePending = pendingMessages.filter(
+      (pm) => !seen.has(`${pm.role}:${pm.content.trim()}`),
+    );
+
+    return [...serverMessages, ...uniquePending];
+  }, [serverMessages, pendingMessages]);
+
+  const filteredConversations = useMemo(() => {
+    if (!searchQuery.trim()) return conversations;
+    const q = searchQuery.toLowerCase();
+    return conversations.filter((c) => c.title.toLowerCase().includes(q));
+  }, [conversations, searchQuery]);
 
   const { data: documents = [] } = useQuery({
     queryKey: ["chat-documents"],
@@ -184,15 +239,36 @@ function ChatPage() {
     },
   });
 
-  // Clear pending messages when active conversation changes (query will refetch)
+  // Clear pending on conversation change
   useEffect(() => {
     setPendingMessages([]);
+    pendingIdsRef.current.clear();
   }, [activeConversationId]);
 
-  // Scroll to bottom when messages change
+  // Scroll to bottom on new messages / streaming
+  const messageCount = messages.length;
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length, streamingContent]);
+  }, [messageCount, streamingContent]);
+
+  // Track scroll position for scroll-to-bottom button
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+      setShowScrollButton(distanceFromBottom > 200);
+    };
+
+    container.addEventListener("scroll", handleScroll);
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
 
   // ============================================
   // Conversation mutations
@@ -210,6 +286,7 @@ function ChatPage() {
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
       setActiveConversationId(conversation.id);
       setPendingMessages([]);
+      pendingIdsRef.current.clear();
       inputRef.current?.focus();
     },
   });
@@ -243,6 +320,7 @@ function ChatPage() {
       if (activeConversationId === deletedId) {
         setActiveConversationId(null);
         setPendingMessages([]);
+        pendingIdsRef.current.clear();
       }
       setDeleteConversationId(null);
     },
@@ -279,20 +357,26 @@ function ChatPage() {
 
     if (!conversationId) return;
 
+    const userMessageId = crypto.randomUUID();
     const userMessage: Message = {
-      id: crypto.randomUUID(),
+      id: userMessageId,
       role: "user",
       content: inputValue.trim(),
       createdAt: new Date().toISOString(),
     };
 
-    setPendingMessages([userMessage]);
+    pendingIdsRef.current.add(userMessageId);
+    setPendingMessages((prev) => [...prev, userMessage]);
     const messageText = inputValue.trim();
     setInputValue("");
     setIsStreaming(true);
     setStreamingContent("");
 
-    // Optimistic auto-title update for first message
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+
+    // Optimistic auto-title for first message
     if (serverMessages.length === 0 && pendingMessages.length === 0) {
       const autoTitle =
         messageText.length > 60
@@ -352,30 +436,29 @@ function ChatPage() {
       }
 
       // Add the complete assistant message to pending
+      const assistantMessageId = crypto.randomUUID();
       const assistantMessage: Message = {
-        id: crypto.randomUUID(),
+        id: assistantMessageId,
         role: "assistant",
         content: fullContent,
         createdAt: new Date().toISOString(),
       };
 
-      setPendingMessages([userMessage, assistantMessage]);
+      pendingIdsRef.current.add(assistantMessageId);
+      setPendingMessages((prev) => [...prev, assistantMessage]);
       setStreamingContent("");
 
-      // Small delay to allow the server's onFinish handler to persist the
-      // assistant message before we refetch.
+      // Wait for server to persist, then sync
       await new Promise((resolve) => setTimeout(resolve, 500));
 
-      // Refresh server data then clear pending messages so they aren't
-      // duplicated by the refetched server messages.
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
       await queryClient.invalidateQueries({
         queryKey: ["messages", conversationId],
       });
       setPendingMessages([]);
+      pendingIdsRef.current.clear();
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
-        // User cancelled - add partial content as message
         const currentStreaming = fullContentRef.current;
         if (currentStreaming) {
           const partialMessage: Message = {
@@ -400,6 +483,9 @@ function ChatPage() {
     } finally {
       setIsStreaming(false);
       abortControllerRef.current = null;
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+      });
     }
   }, [
     inputValue,
@@ -409,6 +495,7 @@ function ChatPage() {
     pendingMessages.length,
     selectedDocumentIds,
     queryClient,
+    setActiveConversationId,
   ]);
 
   const cancelStreaming = useCallback(() => {
@@ -441,345 +528,344 @@ function ChatPage() {
     [sendMessage],
   );
 
+  // Group conversations by time period
+  const groupedConversations = useMemo(() => {
+    const groups: { label: string; items: Conversation[] }[] = [];
+    const today: Conversation[] = [];
+    const yesterday: Conversation[] = [];
+    const thisWeek: Conversation[] = [];
+    const older: Conversation[] = [];
+
+    const now = new Date();
+    const todayStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    );
+    const yesterdayStart = new Date(todayStart.getTime() - 86400000);
+    const weekStart = new Date(todayStart.getTime() - 7 * 86400000);
+
+    for (const convo of filteredConversations) {
+      const date = new Date(convo.updatedAt);
+      if (date >= todayStart) today.push(convo);
+      else if (date >= yesterdayStart) yesterday.push(convo);
+      else if (date >= weekStart) thisWeek.push(convo);
+      else older.push(convo);
+    }
+
+    if (today.length > 0) groups.push({ label: "Today", items: today });
+    if (yesterday.length > 0)
+      groups.push({ label: "Yesterday", items: yesterday });
+    if (thisWeek.length > 0)
+      groups.push({ label: "This week", items: thisWeek });
+    if (older.length > 0) groups.push({ label: "Older", items: older });
+
+    return groups;
+  }, [filteredConversations]);
+
   // ============================================
   // Render
   // ============================================
 
   return (
-    <div className="-m-6 flex h-[calc(100vh-3.5rem)] lg:h-screen">
-      {/* Conversation sidebar */}
-      <div
-        className={cn(
-          "flex w-72 flex-col border-r border-border bg-muted/30 transition-all duration-200",
-          !sidebarOpen && "w-0 overflow-hidden border-r-0",
-        )}
-      >
-        {/* Sidebar header */}
-        <div className="flex h-14 items-center justify-between border-b border-border px-3">
-          <h2 className="text-sm font-semibold">Conversations</h2>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => createConversationMutation.mutate()}
-          >
-            <HugeiconsIcon
-              icon={Add01Icon}
-              strokeWidth={2}
-              className="size-4"
-            />
-          </Button>
-        </div>
+    <>
+      <title>Chat - Prepify</title>
+      <div className="-m-6 flex h-[calc(100vh-3.5rem)] lg:h-screen">
+        {/* ==================== SIDEBAR ==================== */}
+        <div
+          className={cn(
+            "flex flex-col border-r border-border bg-muted/30 transition-all duration-200",
+            sidebarOpen ? "w-72" : "w-0 overflow-hidden border-r-0",
+          )}
+        >
+          {/* Sidebar header */}
+          <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-3">
+            <span className="text-sm font-semibold">Chats</span>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => createConversationMutation.mutate()}
+              title="New chat"
+            >
+              <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+            </Button>
+          </div>
 
-        {/* Conversation list */}
-        <div className="flex-1 overflow-y-auto p-2">
-          {isLoadingConversations ? (
-            <div className="flex items-center justify-center py-8">
+          {/* Search */}
+          <div className="px-3 pt-3 pb-1">
+            <div className="relative">
               <HugeiconsIcon
-                icon={Loading03Icon}
+                icon={Search01Icon}
                 strokeWidth={2}
-                className="size-5 animate-spin text-muted-foreground"
+                className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+              />
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search chats..."
+                className="h-7 pl-8 text-xs"
               />
             </div>
-          ) : conversations.length === 0 ? (
-            <div className="px-3 py-8 text-center">
-              <p className="text-sm text-muted-foreground">
-                No conversations yet
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Start typing to begin
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-0.5">
-              {conversations.map((convo) => (
-                <div
-                  key={convo.id}
-                  className={cn(
-                    "group flex items-center gap-1 rounded-lg px-2.5 py-2 text-sm transition-colors cursor-pointer",
-                    activeConversationId === convo.id
-                      ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                  )}
-                  onClick={() => setActiveConversationId(convo.id)}
-                >
-                  {editingConversationId === convo.id ? (
-                    <div className="flex flex-1 items-center gap-1">
-                      <Input
-                        value={editTitle}
-                        onChange={(e) => setEditTitle(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
+          </div>
+
+          {/* Conversation list */}
+          <div className="flex-1 overflow-y-auto px-2 py-2">
+            {isLoadingConversations ? (
+              <div className="flex items-center justify-center py-12">
+                <HugeiconsIcon
+                  icon={Loading03Icon}
+                  strokeWidth={2}
+                  className="size-4 animate-spin text-muted-foreground"
+                />
+              </div>
+            ) : filteredConversations.length === 0 ? (
+              <div className="px-3 py-12 text-center">
+                <p className="text-xs text-muted-foreground">
+                  {searchQuery ? "No matching chats" : "No conversations yet"}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {groupedConversations.map((group) => (
+                  <div key={group.label}>
+                    <p className="mb-1 px-2 text-[0.65rem] font-medium uppercase tracking-wider text-muted-foreground/70">
+                      {group.label}
+                    </p>
+                    <div className="space-y-px">
+                      {group.items.map((convo) => (
+                        <ConversationItem
+                          key={convo.id}
+                          convo={convo}
+                          isActive={activeConversationId === convo.id}
+                          isEditing={editingConversationId === convo.id}
+                          editTitle={editTitle}
+                          setEditTitle={setEditTitle}
+                          onSelect={() => setActiveConversationId(convo.id)}
+                          onStartEdit={() => {
+                            setEditingConversationId(convo.id);
+                            setEditTitle(convo.title);
+                          }}
+                          onSaveEdit={() =>
                             renameConversationMutation.mutate({
                               id: convo.id,
                               title: editTitle,
-                            });
-                          } else if (e.key === "Escape") {
-                            setEditingConversationId(null);
+                            })
                           }
-                        }}
-                        className="h-6 text-xs"
-                        autoFocus
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          renameConversationMutation.mutate({
-                            id: convo.id,
-                            title: editTitle,
-                          });
-                        }}
-                      >
-                        <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingConversationId(null);
-                        }}
-                      >
-                        <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
-                      </Button>
+                          onCancelEdit={() => setEditingConversationId(null)}
+                          onDelete={() => setDeleteConversationId(convo.id)}
+                        />
+                      ))}
                     </div>
-                  ) : (
-                    <>
-                      <HugeiconsIcon
-                        icon={ChatBotIcon}
-                        strokeWidth={2}
-                        className="size-4 shrink-0"
-                      />
-                      <span className="flex-1 truncate">{convo.title}</span>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              className="opacity-0 group-hover:opacity-100"
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          }
-                        >
-                          <HugeiconsIcon
-                            icon={MoreVerticalIcon}
-                            strokeWidth={2}
-                          />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" side="bottom">
-                          <DropdownMenuItem
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEditingConversationId(convo.id);
-                              setEditTitle(convo.title);
-                            }}
-                          >
-                            <HugeiconsIcon
-                              icon={PencilEdit02Icon}
-                              strokeWidth={2}
-                            />
-                            Rename
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeleteConversationId(convo.id);
-                            }}
-                          >
-                            <HugeiconsIcon
-                              icon={Delete02Icon}
-                              strokeWidth={2}
-                            />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Main chat area */}
-      <div className="flex flex-1 flex-col">
-        {/* Chat header */}
-        <div className="flex h-14 items-center gap-3 border-b border-border px-4">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-          >
-            <HugeiconsIcon
-              icon={ChatBotIcon}
-              strokeWidth={2}
-              className="size-4"
-            />
-          </Button>
-          <div className="flex-1">
-            <h1 className="text-sm font-semibold">
-              {activeConversationId
-                ? conversations.find((c) => c.id === activeConversationId)
-                    ?.title || "Chat"
-                : "AI Chat"}
-            </h1>
-            {selectedDocumentIds.length > 0 && (
-              <p className="text-xs text-muted-foreground">
-                {selectedDocumentIds.length} document
-                {selectedDocumentIds.length !== 1 ? "s" : ""} selected as
-                context
-              </p>
-            )}
-          </div>
-
-          {/* Document scope toggle */}
-          <Button
-            variant={selectedDocumentIds.length > 0 ? "secondary" : "outline"}
-            size="sm"
-            onClick={() => setShowDocumentPicker(!showDocumentPicker)}
-          >
-            <HugeiconsIcon
-              icon={FileAttachmentIcon}
-              strokeWidth={2}
-              className="size-3.5"
-            />
-            {selectedDocumentIds.length > 0
-              ? `${selectedDocumentIds.length} docs`
-              : "Scope"}
-          </Button>
-        </div>
-
-        {/* Document picker panel */}
-        {showDocumentPicker && (
-          <div className="border-b border-border bg-muted/30 p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-xs font-medium text-muted-foreground">
-                Select documents to scope the AI's context (or leave empty for
-                all documents)
-              </p>
-              {selectedDocumentIds.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => setSelectedDocumentIds([])}
-                >
-                  Clear all
-                </Button>
-              )}
-            </div>
-            {documents.length === 0 ? (
-              <p className="text-xs text-muted-foreground">
-                No processed documents available. Upload and process documents
-                first.
-              </p>
-            ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {documents.map((doc) => (
-                  <Badge
-                    key={doc.id}
-                    variant={
-                      selectedDocumentIds.includes(doc.id)
-                        ? "default"
-                        : "outline"
-                    }
-                    className="cursor-pointer select-none"
-                    onClick={() => toggleDocumentScope(doc.id)}
-                  >
-                    {doc.name}
-                  </Badge>
+                  </div>
                 ))}
               </div>
             )}
           </div>
-        )}
-
-        {/* Messages area */}
-        <div className="flex-1 overflow-y-auto">
-          {!activeConversationId && messages.length === 0 ? (
-            // Empty state
-            <div className="flex h-full flex-col items-center justify-center px-4">
-              <div className="flex size-16 items-center justify-center rounded-2xl bg-primary/10">
-                <HugeiconsIcon
-                  icon={ChatBotIcon}
-                  strokeWidth={1.5}
-                  className="size-8 text-primary"
-                />
-              </div>
-              <h2 className="mt-4 text-xl font-semibold">
-                Start a conversation
-              </h2>
-              <p className="mt-2 max-w-md text-center text-sm text-muted-foreground">
-                Ask questions about your study materials or any topic. The AI
-                will use your uploaded documents as context for more accurate
-                answers.
-              </p>
-            </div>
-          ) : (
-            // Message list
-            <div className="mx-auto max-w-3xl space-y-1 px-4 py-4">
-              {isLoadingMessages ? (
-                <div className="flex items-center justify-center py-16">
-                  <HugeiconsIcon
-                    icon={Loading03Icon}
-                    strokeWidth={2}
-                    className="size-5 animate-spin text-muted-foreground"
-                  />
-                </div>
-              ) : (
-                <>
-                  {messages.map((message) => (
-                    <ChatMessage key={message.id} message={message} />
-                  ))}
-
-                  {/* Streaming message */}
-                  {isStreaming && streamingContent && (
-                    <ChatMessage
-                      message={{
-                        id: "streaming",
-                        role: "assistant",
-                        content: streamingContent,
-                        createdAt: new Date().toISOString(),
-                      }}
-                      isStreaming
-                    />
-                  )}
-
-                  {/* Streaming loading indicator (before first token) */}
-                  {isStreaming && !streamingContent && (
-                    <div className="flex gap-3 py-3">
-                      <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                        <HugeiconsIcon
-                          icon={ChatBotIcon}
-                          strokeWidth={2}
-                          className="size-4 text-primary"
-                        />
-                      </div>
-                      <div className="flex items-center gap-1 pt-1">
-                        <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/50" />
-                        <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/50 [animation-delay:150ms]" />
-                        <span className="size-1.5 animate-pulse rounded-full bg-muted-foreground/50 [animation-delay:300ms]" />
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-          )}
         </div>
 
-        {/* Input area */}
-        <div className="border-t border-border bg-background p-4">
-          <div className="mx-auto max-w-3xl">
-            <div className="flex items-end gap-2">
-              <div className="relative flex-1">
+        {/* ==================== MAIN CHAT ==================== */}
+        <div className="flex flex-1 flex-col">
+          {/* Header */}
+          <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-4">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+            >
+              <HugeiconsIcon icon={SidebarLeftIcon} strokeWidth={2} />
+            </Button>
+
+            <div className="h-5 w-px bg-border" />
+
+            <div className="flex-1 min-w-0">
+              <h1 className="truncate text-sm font-medium">
+                {activeConversationId
+                  ? conversations.find((c) => c.id === activeConversationId)
+                      ?.title || "Chat"
+                  : "New chat"}
+              </h1>
+            </div>
+
+            {/* Document scope */}
+            <Button
+              variant={selectedDocumentIds.length > 0 ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => setShowDocumentPicker(!showDocumentPicker)}
+            >
+              <HugeiconsIcon
+                icon={FileAttachmentIcon}
+                strokeWidth={2}
+                className="size-3.5"
+              />
+              {selectedDocumentIds.length > 0
+                ? `${selectedDocumentIds.length} doc${selectedDocumentIds.length !== 1 ? "s" : ""}`
+                : "Add context"}
+            </Button>
+          </div>
+
+          {/* Document picker */}
+          {showDocumentPicker && (
+            <div className="border-b border-border bg-muted/20 px-4 py-3">
+              <div className="mx-auto max-w-2xl">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    Scope AI responses to specific documents
+                  </p>
+                  {selectedDocumentIds.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => setSelectedDocumentIds([])}
+                    >
+                      Clear
+                    </Button>
+                  )}
+                </div>
+                {documents.length === 0 ? (
+                  <p className="text-xs text-muted-foreground/60">
+                    No processed documents available.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {documents.map((doc) => (
+                      <Badge
+                        key={doc.id}
+                        variant={
+                          selectedDocumentIds.includes(doc.id)
+                            ? "default"
+                            : "outline"
+                        }
+                        className="cursor-pointer select-none text-xs"
+                        onClick={() => toggleDocumentScope(doc.id)}
+                      >
+                        {doc.name}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ==================== MESSAGES ==================== */}
+          <div
+            ref={messagesContainerRef}
+            className="relative flex-1 overflow-y-auto"
+          >
+            {!activeConversationId && messages.length === 0 ? (
+              /* Empty state */
+              <div className="flex h-full flex-col items-center justify-center px-4">
+                <div className="flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5">
+                  <HugeiconsIcon
+                    icon={SparklesIcon}
+                    strokeWidth={1.5}
+                    className="size-8 text-primary"
+                  />
+                </div>
+                <h2 className="mt-5 text-xl font-semibold tracking-tight">
+                  How can I help you?
+                </h2>
+                <p className="mt-2 max-w-md text-center text-sm leading-relaxed text-muted-foreground">
+                  Ask questions about your study materials, get explanations, or
+                  explore any topic. Your uploaded documents provide context for
+                  more accurate answers.
+                </p>
+                <div className="mt-6 flex flex-wrap justify-center gap-2">
+                  {[
+                    "Summarize my notes",
+                    "Explain a concept",
+                    "Create study questions",
+                  ].map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      onClick={() => {
+                        setInputValue(suggestion);
+                        inputRef.current?.focus();
+                      }}
+                      className="rounded-full border border-border bg-background px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              /* Message list */
+              <div className="mx-auto max-w-2xl px-4 py-6">
+                {showMessagesLoading ? (
+                  <div className="flex items-center justify-center py-20">
+                    <HugeiconsIcon
+                      icon={Loading03Icon}
+                      strokeWidth={2}
+                      className="size-5 animate-spin text-muted-foreground"
+                    />
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {messages.map((message) => (
+                      <ChatMessage key={message.id} message={message} />
+                    ))}
+
+                    {/* Streaming response */}
+                    {isStreaming && streamingContent && (
+                      <ChatMessage
+                        message={{
+                          id: "streaming",
+                          role: "assistant",
+                          content: streamingContent,
+                          createdAt: new Date().toISOString(),
+                        }}
+                        isStreaming
+                      />
+                    )}
+
+                    {/* Typing indicator - before first token arrives */}
+                    {isStreaming && !streamingContent && (
+                      <div className="flex gap-4">
+                        <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                          <HugeiconsIcon
+                            icon={SparklesIcon}
+                            strokeWidth={2}
+                            className="size-3.5 text-primary"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1 pt-1">
+                          <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:0ms]" />
+                          <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:150ms]" />
+                          <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:300ms]" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+            )}
+
+            {/* Scroll to bottom button */}
+            {showScrollButton && (
+              <div className="sticky bottom-4 flex justify-center">
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  onClick={scrollToBottom}
+                  className="rounded-full shadow-md"
+                >
+                  <HugeiconsIcon
+                    icon={ArrowDown01Icon}
+                    strokeWidth={2}
+                    className="size-4"
+                  />
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {/* ==================== INPUT ==================== */}
+          <div className="border-t border-border bg-background px-4 pb-4 pt-3">
+            <div className="mx-auto max-w-2xl">
+              <div className="relative rounded-xl border border-input bg-background shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30 dark:bg-input/15">
                 <textarea
                   ref={inputRef}
                   value={inputValue}
@@ -787,78 +873,203 @@ function ChatPage() {
                   onKeyDown={handleKeyDown}
                   placeholder={
                     activeConversationId
-                      ? "Type your message..."
+                      ? "Message Prepify..."
                       : "Start a new conversation..."
                   }
                   disabled={isStreaming}
                   rows={1}
-                  className="flex min-h-10 max-h-36 w-full resize-none rounded-lg border border-input bg-transparent px-3 py-2.5 text-sm transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30"
-                  style={{ fieldSizing: "content" } as React.CSSProperties}
+                  className="block w-full resize-none bg-transparent px-4 pt-3 pb-10 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  style={
+                    {
+                      fieldSizing: "content",
+                      maxHeight: "10rem",
+                    } as React.CSSProperties
+                  }
                 />
+                <div className="absolute bottom-2 right-2 flex items-center gap-1">
+                  {isStreaming ? (
+                    <Button
+                      variant="outline"
+                      size="icon-sm"
+                      onClick={cancelStreaming}
+                      title="Stop generating"
+                      className="rounded-lg"
+                    >
+                      <HugeiconsIcon
+                        icon={StopIcon}
+                        strokeWidth={2}
+                        className="size-3.5"
+                      />
+                    </Button>
+                  ) : (
+                    <Button
+                      size="icon-sm"
+                      onClick={sendMessage}
+                      disabled={!inputValue.trim()}
+                      title="Send message"
+                      className="rounded-lg"
+                    >
+                      <HugeiconsIcon
+                        icon={SentIcon}
+                        strokeWidth={2}
+                        className="size-3.5"
+                      />
+                    </Button>
+                  )}
+                </div>
               </div>
-              {isStreaming ? (
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={cancelStreaming}
-                  title="Stop generating"
-                >
-                  <HugeiconsIcon
-                    icon={Cancel01Icon}
-                    strokeWidth={2}
-                    className="size-4"
-                  />
-                </Button>
-              ) : (
-                <Button
-                  size="icon"
-                  onClick={sendMessage}
-                  disabled={!inputValue.trim()}
-                  title="Send message"
-                >
-                  <HugeiconsIcon
-                    icon={SentIcon}
-                    strokeWidth={2}
-                    className="size-4"
-                  />
-                </Button>
-              )}
+              <p className="mt-2 text-center text-[0.65rem] text-muted-foreground/60">
+                AI may produce inaccurate information. Verify important facts.
+              </p>
             </div>
-            <p className="mt-2 text-center text-xs text-muted-foreground">
-              AI responses may be inaccurate. Verify important information.
-            </p>
           </div>
         </div>
-      </div>
 
-      {/* Delete confirmation dialog */}
-      <AlertDialog
-        open={!!deleteConversationId}
-        onOpenChange={(open) => {
-          if (!open) setDeleteConversationId(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete conversation?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete this conversation and all its
-              messages. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() =>
-                deleteConversationId &&
-                deleteConversationMutation.mutate(deleteConversationId)
-              }
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        {/* Delete confirmation */}
+        <AlertDialog
+          open={!!deleteConversationId}
+          onOpenChange={(open) => {
+            if (!open) setDeleteConversationId(null);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete conversation?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete this conversation and all its
+                messages.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() =>
+                  deleteConversationId &&
+                  deleteConversationMutation.mutate(deleteConversationId)
+                }
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </>
+  );
+}
+
+// ============================================
+// Conversation Sidebar Item
+// ============================================
+
+function ConversationItem({
+  convo,
+  isActive,
+  isEditing,
+  editTitle,
+  setEditTitle,
+  onSelect,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
+  onDelete,
+}: {
+  convo: Conversation;
+  isActive: boolean;
+  isEditing: boolean;
+  editTitle: string;
+  setEditTitle: (title: string) => void;
+  onSelect: () => void;
+  onStartEdit: () => void;
+  onSaveEdit: () => void;
+  onCancelEdit: () => void;
+  onDelete: () => void;
+}) {
+  if (isEditing) {
+    return (
+      <div className="flex items-center gap-1 rounded-lg bg-accent px-2 py-1.5">
+        <Input
+          value={editTitle}
+          onChange={(e) => setEditTitle(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onSaveEdit();
+            else if (e.key === "Escape") onCancelEdit();
+          }}
+          className="h-6 flex-1 text-xs"
+          autoFocus
+          onClick={(e) => e.stopPropagation()}
+        />
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSaveEdit();
+          }}
+        >
+          <HugeiconsIcon icon={Tick02Icon} strokeWidth={2} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCancelEdit();
+          }}
+        >
+          <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        "group flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors cursor-pointer",
+        isActive
+          ? "bg-accent text-accent-foreground"
+          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+      )}
+      onClick={onSelect}
+    >
+      <span className="flex-1 truncate text-[0.8rem]">{convo.title}</span>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+              onClick={(e) => e.stopPropagation()}
+            />
+          }
+        >
+          <HugeiconsIcon icon={MoreHorizontalIcon} strokeWidth={2} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" side="bottom">
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onStartEdit();
+            }}
+          >
+            <HugeiconsIcon icon={PencilEdit02Icon} strokeWidth={2} />
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            variant="destructive"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+          >
+            <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
@@ -877,117 +1088,227 @@ function ChatMessage({
   const isUser = message.role === "user";
 
   return (
-    <div className={cn("flex gap-3 py-3", isUser && "flex-row-reverse")}>
-      {/* Avatar */}
+    <div className="flex gap-4">
+      {/* Icon */}
       <div
         className={cn(
-          "flex size-7 shrink-0 items-center justify-center rounded-lg",
-          isUser ? "bg-foreground/10" : "bg-primary/10",
+          "flex size-7 shrink-0 items-center justify-center rounded-lg mt-0.5",
+          isUser ? "bg-foreground/8" : "bg-primary/10",
         )}
       >
         {isUser ? (
-          <span className="text-xs font-medium">You</span>
+          <HugeiconsIcon
+            icon={UserIcon}
+            strokeWidth={2}
+            className="size-3.5 text-foreground/70"
+          />
         ) : (
           <HugeiconsIcon
-            icon={ChatBotIcon}
+            icon={SparklesIcon}
             strokeWidth={2}
-            className="size-4 text-primary"
+            className="size-3.5 text-primary"
           />
         )}
       </div>
 
-      {/* Message bubble */}
-      <div
-        className={cn(
-          "max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed",
-          isUser
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted text-foreground",
-        )}
-      >
-        <MessageContent content={message.content} />
-        {isStreaming && (
-          <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-current" />
-        )}
+      {/* Content */}
+      <div className="min-w-0 flex-1 pt-0.5">
+        <p className="mb-1 text-xs font-medium text-muted-foreground">
+          {isUser ? "You" : "Prepify AI"}
+        </p>
+        <div className="text-sm leading-relaxed">
+          <MessageContent content={message.content} />
+          {isStreaming && (
+            <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-primary align-text-bottom" />
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
 // ============================================
-// Message Content Renderer (basic markdown)
+// Message Content Renderer
 // ============================================
 
 function MessageContent({ content }: { content: string }) {
-  // Simple markdown-like rendering for common patterns
-  const lines = content.split("\n");
+  const blocks = useMemo(() => parseBlocks(content), [content]);
 
   return (
     <div className="space-y-2">
-      {lines.map((line, i) => {
-        // Empty line = paragraph break
-        if (!line.trim()) {
-          return <div key={i} className="h-1" />;
-        }
-
-        // Headers
-        if (line.startsWith("### ")) {
+      {blocks.map((block, i) => {
+        if (block.type === "code") {
           return (
-            <h4 key={i} className="font-semibold text-sm mt-3 mb-1">
-              {line.slice(4)}
-            </h4>
-          );
-        }
-        if (line.startsWith("## ")) {
-          return (
-            <h3 key={i} className="font-semibold text-base mt-3 mb-1">
-              {line.slice(3)}
-            </h3>
-          );
-        }
-        if (line.startsWith("# ")) {
-          return (
-            <h2 key={i} className="font-bold text-lg mt-3 mb-1">
-              {line.slice(2)}
-            </h2>
-          );
-        }
-
-        // Bullet points
-        if (line.startsWith("- ") || line.startsWith("* ")) {
-          return (
-            <div key={i} className="flex gap-2 pl-1">
-              <span className="mt-1.5 size-1 shrink-0 rounded-full bg-current opacity-50" />
-              <span>{renderInlineFormatting(line.slice(2))}</span>
+            <div key={i} className="relative group/code">
+              {block.lang && (
+                <div className="flex items-center justify-between rounded-t-lg border border-b-0 border-foreground/10 bg-foreground/5 px-3 py-1">
+                  <span className="text-[0.65rem] font-medium text-muted-foreground">
+                    {block.lang}
+                  </span>
+                </div>
+              )}
+              <pre
+                className={cn(
+                  "overflow-x-auto border border-foreground/10 bg-foreground/[0.03] p-3 text-xs font-mono leading-relaxed",
+                  block.lang ? "rounded-b-lg" : "rounded-lg",
+                )}
+              >
+                <code>{block.content}</code>
+              </pre>
             </div>
           );
         }
 
-        // Numbered lists
-        const numberedMatch = line.match(/^(\d+)\.\s(.+)/);
-        if (numberedMatch) {
-          return (
-            <div key={i} className="flex gap-2 pl-1">
-              <span className="shrink-0 text-muted-foreground">
-                {numberedMatch[1]}.
-              </span>
-              <span>{renderInlineFormatting(numberedMatch[2])}</span>
-            </div>
-          );
-        }
-
-        // Regular paragraph
-        return <p key={i}>{renderInlineFormatting(line)}</p>;
+        // Regular text block - render lines
+        return (
+          <div key={i} className="space-y-1.5">
+            {block.lines.map((line, j) => renderLine(line, j))}
+          </div>
+        );
       })}
     </div>
   );
 }
 
-function renderInlineFormatting(text: string): React.ReactNode {
-  // Bold: **text**
-  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+// ============================================
+// Markdown parsing helpers
+// ============================================
+
+type CodeBlock = { type: "code"; lang?: string; content: string };
+type TextBlock = { type: "text"; lines: string[] };
+type Block = CodeBlock | TextBlock;
+
+function parseBlocks(content: string): Block[] {
+  const blocks: Block[] = [];
+  const lines = content.split("\n");
+  let currentText: string[] = [];
+  let inCode = false;
+  let codeLang = "";
+  let codeLines: string[] = [];
+
+  for (const line of lines) {
+    if (!inCode && line.startsWith("```")) {
+      // Flush text
+      if (currentText.length > 0) {
+        blocks.push({ type: "text", lines: currentText });
+        currentText = [];
+      }
+      inCode = true;
+      codeLang = line.slice(3).trim();
+      codeLines = [];
+    } else if (inCode && line.startsWith("```")) {
+      blocks.push({
+        type: "code",
+        lang: codeLang || undefined,
+        content: codeLines.join("\n"),
+      });
+      inCode = false;
+      codeLang = "";
+      codeLines = [];
+    } else if (inCode) {
+      codeLines.push(line);
+    } else {
+      currentText.push(line);
+    }
+  }
+
+  // Flush remaining
+  if (inCode) {
+    // Unclosed code block, render as code anyway
+    blocks.push({
+      type: "code",
+      lang: codeLang || undefined,
+      content: codeLines.join("\n"),
+    });
+  }
+  if (currentText.length > 0) {
+    blocks.push({ type: "text", lines: currentText });
+  }
+
+  return blocks;
+}
+
+function renderLine(line: string, key: number): ReactNode {
+  // Empty line
+  if (!line.trim()) {
+    return <div key={key} className="h-1.5" />;
+  }
+
+  // Headers
+  if (line.startsWith("### ")) {
+    return (
+      <h4 key={key} className="mt-3 mb-1 text-sm font-semibold">
+        {renderInline(line.slice(4))}
+      </h4>
+    );
+  }
+  if (line.startsWith("## ")) {
+    return (
+      <h3 key={key} className="mt-3 mb-1 text-[0.95rem] font-semibold">
+        {renderInline(line.slice(3))}
+      </h3>
+    );
+  }
+  if (line.startsWith("# ")) {
+    return (
+      <h2 key={key} className="mt-3 mb-1 text-base font-bold">
+        {renderInline(line.slice(2))}
+      </h2>
+    );
+  }
+
+  // Bullet points
+  if (line.startsWith("- ") || line.startsWith("* ")) {
+    return (
+      <div key={key} className="flex gap-2 pl-1">
+        <span className="mt-[0.55rem] size-1 shrink-0 rounded-full bg-current opacity-40" />
+        <span className="flex-1">{renderInline(line.slice(2))}</span>
+      </div>
+    );
+  }
+
+  // Numbered lists
+  const numberedMatch = line.match(/^(\d+)\.\s(.+)/);
+  if (numberedMatch) {
+    return (
+      <div key={key} className="flex gap-2 pl-1">
+        <span className="shrink-0 text-muted-foreground tabular-nums">
+          {numberedMatch[1]}.
+        </span>
+        <span className="flex-1">{renderInline(numberedMatch[2])}</span>
+      </div>
+    );
+  }
+
+  // Blockquote
+  if (line.startsWith("> ")) {
+    return (
+      <div
+        key={key}
+        className="border-l-2 border-primary/30 pl-3 text-muted-foreground italic"
+      >
+        {renderInline(line.slice(2))}
+      </div>
+    );
+  }
+
+  // Horizontal rule
+  if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
+    return <hr key={key} className="my-2 border-border" />;
+  }
+
+  // Regular paragraph
+  return <p key={key}>{renderInline(line)}</p>;
+}
+
+function renderInline(text: string): ReactNode {
+  // Match bold, italic, inline code, and links
+  const parts = text.split(
+    /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g,
+  );
 
   return parts.map((part, i) => {
+    // Bold
     if (part.startsWith("**") && part.endsWith("**")) {
       return (
         <strong key={i} className="font-semibold">
@@ -995,14 +1316,38 @@ function renderInlineFormatting(text: string): React.ReactNode {
         </strong>
       );
     }
+    // Italic
+    if (part.startsWith("*") && part.endsWith("*") && !part.startsWith("**")) {
+      return (
+        <em key={i} className="italic">
+          {part.slice(1, -1)}
+        </em>
+      );
+    }
+    // Inline code
     if (part.startsWith("`") && part.endsWith("`")) {
       return (
         <code
           key={i}
-          className="rounded bg-foreground/10 px-1 py-0.5 text-xs font-mono"
+          className="rounded bg-foreground/[0.06] px-1.5 py-0.5 text-[0.8em] font-mono text-foreground/90"
         >
           {part.slice(1, -1)}
         </code>
+      );
+    }
+    // Links
+    const linkMatch = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    if (linkMatch) {
+      return (
+        <a
+          key={i}
+          href={linkMatch[2]}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-primary underline underline-offset-2 hover:text-primary/80"
+        >
+          {linkMatch[1]}
+        </a>
       );
     }
     return part;
