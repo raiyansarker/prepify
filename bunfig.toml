@@ -1,0 +1,3 @@
+[install]
+publicHoistPattern = ["nitro*"]
+
