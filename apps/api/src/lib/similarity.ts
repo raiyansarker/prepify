@@ -4,13 +4,14 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { db } from "#/db";
 import { documentChunks, documents } from "#/db/schema";
 import { MAX_CONTEXT_CHUNKS } from "@repo/shared";
+import { env } from "#/lib/env";
 
 // ============================================
 // Embedding provider for queries
 // ============================================
 
 const google = createGoogleGenerativeAI({
-  apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+  apiKey: env().ai.googleApiKey,
 });
 
 // ============================================

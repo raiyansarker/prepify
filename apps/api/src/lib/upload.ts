@@ -1,19 +1,22 @@
 import { createUploadConfig } from "pushduck/server";
 import { ulid } from "ulid";
 import { MAX_FILE_SIZE_MB, MAX_IMAGE_SIZE_MB } from "@repo/shared";
+import { env } from "#/lib/env";
 
 // ============================================
 // Pushduck R2 Upload Configuration
 // ============================================
 
+const storage = env().storage;
+
 const { s3 } = createUploadConfig()
   .provider("cloudflareR2", {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-    accountId: process.env.R2_ACCOUNT_ID!,
-    bucket: process.env.R2_BUCKET!,
+    accessKeyId: storage.accessKeyId,
+    secretAccessKey: storage.secretAccessKey,
+    accountId: storage.accountId,
+    bucket: storage.bucket,
     region: "auto",
-    customDomain: process.env.R2_ACCESS_URL!,
+    customDomain: storage.accessUrl,
   })
   .paths({
     prefix: "uploads",

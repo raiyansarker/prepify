@@ -1,9 +1,10 @@
 import { Elysia } from "elysia";
 import { createClerkClient } from "@clerk/backend";
+import { env } from "#/lib/env";
 
 const clerkClient = createClerkClient({
-  secretKey: process.env.CLERK_SECRET_KEY!,
-  publishableKey: process.env.CLERK_PUBLISHABLE_KEY!,
+  secretKey: env().clerk.secretKey,
+  publishableKey: env().clerk.publishableKey,
 });
 
 export { clerkClient };
@@ -21,8 +22,8 @@ export const authMiddleware = new Elysia({ name: "auth" }).derive(
     });
 
     const authResult = await clerkClient.authenticateRequest(authRequest, {
-      jwtKey: process.env.CLERK_JWT_KEY,
-      authorizedParties: process.env.CLERK_AUTHORIZED_PARTIES?.split(","),
+      jwtKey: env().clerk.jwtKey,
+      authorizedParties: env().clerk.authorizedParties,
     });
 
     if (!authResult.isSignedIn) {

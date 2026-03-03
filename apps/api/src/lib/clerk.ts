@@ -1,4 +1,5 @@
 import { clerkClient } from "#/middleware/auth";
+import { apiLogger } from "#/lib/logger";
 
 // ============================================
 // Clerk User Details (fetched on demand)
@@ -14,6 +15,7 @@ export type ClerkUserDetails = {
 /**
  * Fetch user details from Clerk API by user ID.
  * Use this when you need display info (name, avatar, email).
+ * Returns null on failure (logged, non-fatal).
  */
 export async function getUserDetails(
   userId: string,
@@ -30,7 +32,11 @@ export async function getUserDetails(
       name: [user.firstName, user.lastName].filter(Boolean).join(" ") || null,
       avatar: user.imageUrl ?? null,
     };
-  } catch {
+  } catch (error) {
+    apiLogger.warn(
+      { err: error, userId },
+      "Failed to fetch user details from Clerk",
+    );
     return null;
   }
 }

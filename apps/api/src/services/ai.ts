@@ -1,5 +1,6 @@
 import { Context, Effect, Layer } from "effect";
 import { createGroq } from "@ai-sdk/groq";
+import { env } from "#/lib/env";
 
 // ============================================
 // AI Service
@@ -16,6 +17,6 @@ export class AiService extends Context.Tag("AiService")<
 
 export const AiServiceLive = Layer.succeed(AiService, {
   provider: createGroq({
-    apiKey: process.env.GROQ_API_KEY,
+    apiKey: env().ai.groqApiKey,
   }),
 });
