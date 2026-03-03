@@ -52,8 +52,11 @@ export function CreateFolderDialog({
       setName("");
       onFolderCreated();
       onOpenChange(false);
-    } catch {
-      setError("Failed to create folder");
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to create folder";
+      console.error("Failed to create folder:", err);
+      setError(message);
     } finally {
       setIsCreating(false);
     }

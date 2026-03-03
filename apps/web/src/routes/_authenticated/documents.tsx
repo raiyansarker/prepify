@@ -249,6 +249,10 @@ function DocumentsPage() {
       setDeleteTarget(null);
       invalidateFileData();
     },
+    onError: (err) => {
+      console.error("Failed to delete item:", err);
+      setDeleteTarget(null);
+    },
   });
 
   const renameMutation = useMutation({
@@ -267,6 +271,11 @@ function DocumentsPage() {
       setRenameTarget(null);
       setRenameName("");
       invalidateFileData();
+    },
+    onError: (err) => {
+      console.error("Failed to rename item:", err);
+      setRenameTarget(null);
+      setRenameName("");
     },
   });
 

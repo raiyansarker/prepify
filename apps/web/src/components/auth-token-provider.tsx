@@ -17,7 +17,8 @@ export function AuthTokenProvider({ children }: { children: React.ReactNode }) {
         if (mounted) {
           window.__clerk_token = token ?? undefined;
         }
-      } catch {
+      } catch (err) {
+        console.warn("Failed to refresh Clerk session token:", err);
         if (mounted) {
           window.__clerk_token = undefined;
         }

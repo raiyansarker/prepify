@@ -54,7 +54,7 @@ import {
 } from "#/components/ui/alert-dialog";
 import { Badge } from "#/components/ui/badge";
 import { cn } from "#/lib/utils";
-import { api } from "#/lib/api";
+import { api, API_URL } from "#/lib/api";
 
 // ============================================
 // Route definition with search params
@@ -95,8 +95,6 @@ type Document = {
 // ============================================
 // Helpers
 // ============================================
-
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
 
 /** Convert a server Message to a UIMessage for useChat */
 function toUIMessage(msg: Message): UIMessage {
@@ -427,7 +425,8 @@ function ChatPage() {
           activeConversationIdRef.current = conversationId;
           setActiveConversationId(conversationId);
         }
-      } catch {
+      } catch (err) {
+        console.error("Failed to create conversation:", err);
         return;
       }
     }

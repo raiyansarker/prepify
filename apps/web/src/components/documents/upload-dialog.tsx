@@ -62,17 +62,31 @@ export function UploadDialog({
   } = uploadClient.documentUpload({
     onSuccess: async (results) => {
       // Create document records for each successfully uploaded file
+      const errors: string[] = [];
       for (const result of results) {
         if (result.url && result.key) {
-          await api.documents.post({
-            name: result.name,
-            mimeType: result.type,
-            fileSize: result.size,
-            s3Key: result.key,
-            s3Url: result.url,
-            folderId: folderId || undefined,
-          });
+          try {
+            await api.documents.post({
+              name: result.name,
+              mimeType: result.type,
+              fileSize: result.size,
+              s3Key: result.key,
+              s3Url: result.url,
+              folderId: folderId || undefined,
+            });
+          } catch (err) {
+            console.error(
+              `Failed to create document record for "${result.name}":`,
+              err,
+            );
+            errors.push(result.name);
+          }
         }
+      }
+      if (errors.length > 0) {
+        console.warn(
+          `${errors.length} file(s) uploaded but failed to save: ${errors.join(", ")}`,
+        );
       }
       onUploadComplete();
     },
