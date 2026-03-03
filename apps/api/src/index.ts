@@ -1,6 +1,7 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { swagger } from "@elysiajs/swagger";
+import { authRoutes } from "#/routes/auth";
 
 const app = new Elysia()
   .use(
@@ -28,6 +29,7 @@ const app = new Elysia()
     status: "ok",
     timestamp: new Date().toISOString(),
   }))
+  .use(authRoutes)
   .listen(process.env.PORT ?? 3001);
 
 console.log(`Prepify API is running at http://localhost:${app.server?.port}`);
