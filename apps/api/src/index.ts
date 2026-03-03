@@ -1,7 +1,12 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { swagger } from "@elysiajs/swagger";
-import { authRoutes } from "#/routes/auth";
+import { openapi } from "@elysiajs/openapi";
+import { Logestic } from "logestic";
+import { uploadRoutes } from "#/routes/upload";
+import { folderRoutes } from "#/routes/folders";
+import { documentRoutes } from "#/routes/documents";
+import { chatRoutes } from "#/routes/chat";
+// import { apiLogger } from "#/lib/logger";
 
 const app = new Elysia()
   .use(
@@ -15,7 +20,7 @@ const app = new Elysia()
     }),
   )
   .use(
-    swagger({
+    openapi({
       documentation: {
         info: {
           title: "Prepify API",
@@ -25,13 +30,17 @@ const app = new Elysia()
       },
     }),
   )
+  .use(Logestic.preset("common"))
   .get("/health", () => ({
     status: "ok",
     timestamp: new Date().toISOString(),
   }))
-  .use(authRoutes)
+  .use(uploadRoutes)
+  .use(folderRoutes)
+  .use(documentRoutes)
+  .use(chatRoutes)
   .listen(process.env.PORT ?? 3001);
 
-console.log(`Prepify API is running at http://localhost:${app.server?.port}`);
+// apiLogger.info({ port: app.server?.port }, "Prepify API is running");
 
 export type App = typeof app;

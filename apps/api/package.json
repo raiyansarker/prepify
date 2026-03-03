@@ -11,13 +11,14 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "worker:dev": "bun run --watch src/workers/document-processing.ts",
+    "build:worker": "bun build src/workers/document-processing.ts --outdir ./dist --target bun"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^0.2.0",
     "@clerk/backend": "^1.27.0",
     "@elysiajs/cors": "^1.2.0",
-    "@elysiajs/swagger": "^1.2.0",
     "@neondatabase/serverless": "^1.0.0",
     "ai": "^4.3.0",
     "bullmq": "^5.34.0",
@@ -27,7 +28,9 @@
     "pushduck": "^0.3.1",
     "zod": "^3.24.0",
     "pino": "^10.3.1",
-    "logestic": "^1.2.4"
+    "logestic": "^1.2.4",
+    "@elysiajs/openapi": "^1.4.14",
+    "ulid": "^3.0.2"
   },
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
