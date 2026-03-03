@@ -39,6 +39,43 @@ export const folderRoutes = new Elysia({ prefix: "/folders" })
     },
   )
 
+  // Get the ancestor path for a folder (for rebuilding breadcrumbs)
+  .get(
+    "/path/:id",
+    async (ctx) => {
+      const auth = (ctx as unknown as { auth: Auth }).auth;
+
+      const path: { id: string; name: string }[] = [];
+      let currentId: string | null = ctx.params.id;
+
+      // Walk up the parent chain (with a safety limit of 20 levels)
+      while (currentId && path.length < 20) {
+        const ancestor:
+          | { id: string; name: string; parentId: string | null }
+          | undefined = await db.query.folders.findFirst({
+          where: and(
+            eq(folders.id, currentId),
+            eq(folders.userId, auth.userId),
+          ),
+        });
+
+        if (!ancestor) break;
+        path.unshift({ id: ancestor.id, name: ancestor.name });
+        currentId = ancestor.parentId;
+      }
+
+      return {
+        success: true as const,
+        data: path,
+      };
+    },
+    {
+      params: t.Object({
+        id: t.String(),
+      }),
+    },
+  )
+
   // Create a folder
   .post(
     "/",
