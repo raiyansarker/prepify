@@ -1,8 +1,8 @@
 import { Worker, type Job } from "bullmq";
 import { eq } from "drizzle-orm";
 import { generateText, embedMany } from "ai";
-import { createGroq } from "@ai-sdk/groq";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { createHuggingFace } from "@ai-sdk/huggingface";
 import { db } from "#/db";
 import { documents, documentChunks } from "#/db/schema";
 import { redisConnection } from "#/lib/redis";
@@ -15,12 +15,12 @@ import type { DocumentProcessingJob } from "@repo/shared";
 // AI Providers (standalone, not via Effect for worker)
 // ============================================
 
-const groq = createGroq({
-  apiKey: process.env.GROQ_API_KEY,
-});
-
 const openrouter = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY,
+});
+
+const huggingface = createHuggingFace({
+  apiKey: process.env.HUGGINGFACE_API_KEY,
 });
 
 // ============================================
@@ -43,10 +43,8 @@ async function extractTextFromDocument(
   const base64 = buffer.toString("base64");
 
   if (mimeType === "application/pdf") {
-    // Groq doesn't support PDF file attachments directly, so we use
-    // OpenRouter with a model that supports PDF input
     const { text } = await generateText({
-      model: openrouter("google/gemini-2.0-flash-001"),
+      model: openrouter("z-ai/glm-4.5-air:free"),
       messages: [
         {
           role: "user" as const,
@@ -69,10 +67,10 @@ async function extractTextFromDocument(
     return text;
   }
 
-  // For images, use Groq vision model
+  // For images, use OpenRouter with GLM-4.5
   if (mimeType.startsWith("image/")) {
     const { text } = await generateText({
-      model: groq("meta-llama/llama-4-scout-17b-16e-instruct"),
+      model: openrouter("z-ai/glm-4.5-air:free"),
       messages: [
         {
           role: "user",
@@ -105,7 +103,7 @@ async function generateEmbeddings(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
 
   const { embeddings } = await embedMany({
-    model: openrouter.textEmbeddingModel(
+    model: huggingface.textEmbeddingModel(
       "sentence-transformers/all-mpnet-base-v2",
     ),
     values: texts,

@@ -1,6 +1,6 @@
 import { sql, eq, and, inArray } from "drizzle-orm";
 import { embed } from "ai";
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { createHuggingFace } from "@ai-sdk/huggingface";
 import { db } from "#/db";
 import { documentChunks, documents } from "#/db/schema";
 import { MAX_CONTEXT_CHUNKS } from "@repo/shared";
@@ -9,8 +9,8 @@ import { MAX_CONTEXT_CHUNKS } from "@repo/shared";
 // Embedding provider for queries
 // ============================================
 
-const openrouter = createOpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY,
+const huggingface = createHuggingFace({
+  apiKey: process.env.HUGGINGFACE_API_KEY,
 });
 
 // ============================================
@@ -55,7 +55,7 @@ export async function findSimilarChunks(
 
   // 1. Embed the query
   const { embedding: queryEmbedding } = await embed({
-    model: openrouter.textEmbeddingModel(
+    model: huggingface.textEmbeddingModel(
       "sentence-transformers/all-mpnet-base-v2",
     ),
     value: query,

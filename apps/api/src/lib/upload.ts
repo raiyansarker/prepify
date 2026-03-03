@@ -13,6 +13,7 @@ const { s3 } = createUploadConfig()
     accountId: process.env.R2_ACCOUNT_ID!,
     bucket: process.env.R2_BUCKET!,
     region: "auto",
+    customDomain: process.env.R2_ACCESS_URL!,
   })
   .paths({
     prefix: "uploads",

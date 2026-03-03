@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@ai-sdk/groq": "^3.0.27",
+    "@ai-sdk/huggingface": "^1.0.35",
     "@clerk/backend": "^1.27.0",
     "@elysiajs/cors": "^1.2.0",
     "@elysiajs/openapi": "^1.4.14",
