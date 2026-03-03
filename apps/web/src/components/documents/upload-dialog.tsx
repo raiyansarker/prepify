@@ -19,20 +19,16 @@ import {
 import { Progress } from "#/components/ui/progress";
 import { cn } from "#/lib/utils";
 import { api } from "#/lib/api";
+import { uploadClient } from "#/lib/upload";
 import {
   MAX_FILE_SIZE_MB,
   ALLOWED_DOCUMENT_TYPES,
   ALLOWED_IMAGE_TYPES,
 } from "@repo/shared";
 
-type UploadFile = {
+type StagedFile = {
   id: string;
   file: File;
-  progress: number;
-  status: "pending" | "uploading" | "success" | "error";
-  error?: string;
-  s3Key?: string;
-  s3Url?: string;
 };
 
 type UploadDialogProps = {
@@ -53,13 +49,40 @@ export function UploadDialog({
   folderId,
   onUploadComplete,
 }: UploadDialogProps) {
-  const [files, setFiles] = useState<UploadFile[]>([]);
+  const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const {
+    uploadFiles: pushduckUpload,
+    files: uploadedFiles,
+    isUploading,
+    progress,
+    reset: resetUpload,
+  } = uploadClient.documentUpload({
+    onSuccess: async (results) => {
+      // Create document records for each successfully uploaded file
+      for (const result of results) {
+        if (result.url && result.key) {
+          await api.documents.post({
+            name: result.name,
+            mimeType: result.type,
+            fileSize: result.size,
+            s3Key: result.key,
+            s3Url: result.url,
+            folderId: folderId || undefined,
+          });
+        }
+      }
+      onUploadComplete();
+    },
+    onError: (error) => {
+      console.error("Upload failed:", error);
+    },
+  });
+
   const addFiles = useCallback((newFiles: File[]) => {
-    const uploadFiles: UploadFile[] = newFiles
+    const validFiles: StagedFile[] = newFiles
       .filter((f) => {
         const isValidType = ACCEPTED_TYPES.includes(f.type);
         const isValidSize = f.size <= MAX_FILE_SIZE_MB * 1024 * 1024;
@@ -68,15 +91,13 @@ export function UploadDialog({
       .map((file) => ({
         id: crypto.randomUUID(),
         file,
-        progress: 0,
-        status: "pending" as const,
       }));
 
-    setFiles((prev) => [...prev, ...uploadFiles]);
+    setStagedFiles((prev) => [...prev, ...validFiles]);
   }, []);
 
   const removeFile = useCallback((id: string) => {
-    setFiles((prev) => prev.filter((f) => f.id !== id));
+    setStagedFiles((prev) => prev.filter((f) => f.id !== id));
   }, []);
 
   const handleDrop = useCallback(
@@ -112,103 +133,27 @@ export function UploadDialog({
     [addFiles],
   );
 
-  const uploadFiles = useCallback(async () => {
-    setIsUploading(true);
-
-    const pendingFiles = files.filter((f) => f.status === "pending");
-
-    for (const uploadFile of pendingFiles) {
-      // Update status to uploading
-      setFiles((prev) =>
-        prev.map((f) =>
-          f.id === uploadFile.id ? { ...f, status: "uploading" as const } : f,
-        ),
-      );
-
-      try {
-        // Upload to S3 via Pushduck endpoint
-        const formData = new FormData();
-        formData.append("file", uploadFile.file);
-
-        const uploadResponse = await fetch(
-          `${import.meta.env.VITE_API_URL || "http://localhost:3001"}/upload/documentUpload`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${window.__clerk_token || ""}`,
-            },
-            body: formData,
-          },
-        );
-
-        if (!uploadResponse.ok) {
-          throw new Error("Upload failed");
-        }
-
-        const uploadResult = (await uploadResponse.json()) as {
-          url: string;
-          key: string;
-        };
-
-        // Create document record in database
-        const { error } = await api.documents.post({
-          name: uploadFile.file.name,
-          mimeType: uploadFile.file.type,
-          fileSize: uploadFile.file.size,
-          s3Key: uploadResult.key,
-          s3Url: uploadResult.url,
-          folderId: folderId || undefined,
-        });
-
-        if (error) {
-          throw new Error("Failed to create document record");
-        }
-
-        // Update status to success
-        setFiles((prev) =>
-          prev.map((f) =>
-            f.id === uploadFile.id
-              ? {
-                  ...f,
-                  status: "success" as const,
-                  progress: 100,
-                  s3Key: uploadResult.key,
-                  s3Url: uploadResult.url,
-                }
-              : f,
-          ),
-        );
-      } catch (err) {
-        setFiles((prev) =>
-          prev.map((f) =>
-            f.id === uploadFile.id
-              ? {
-                  ...f,
-                  status: "error" as const,
-                  error: err instanceof Error ? err.message : "Upload failed",
-                }
-              : f,
-          ),
-        );
-      }
-    }
-
-    setIsUploading(false);
-    onUploadComplete();
-  }, [files, folderId, onUploadComplete]);
+  const handleUpload = useCallback(async () => {
+    const filesToUpload = stagedFiles.map((sf) => sf.file);
+    setStagedFiles([]);
+    await pushduckUpload(filesToUpload);
+  }, [stagedFiles, pushduckUpload]);
 
   const handleClose = useCallback(() => {
     if (!isUploading) {
-      setFiles([]);
+      setStagedFiles([]);
+      resetUpload();
       onOpenChange(false);
     }
-  }, [isUploading, onOpenChange]);
+  }, [isUploading, onOpenChange, resetUpload]);
 
-  const hasFiles = files.length > 0;
-  const allDone = files.every(
-    (f) => f.status === "success" || f.status === "error",
-  );
-  const hasPending = files.some((f) => f.status === "pending");
+  const hasStaged = stagedFiles.length > 0;
+  const hasUploaded = uploadedFiles.length > 0;
+  const hasFiles = hasStaged || hasUploaded;
+  const allDone =
+    hasUploaded &&
+    !hasStaged &&
+    uploadedFiles.every((f) => f.status === "success" || f.status === "error");
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -259,10 +204,52 @@ export function UploadDialog({
           className="hidden"
         />
 
-        {/* File list */}
-        {hasFiles && (
+        {/* Staged files (before upload) */}
+        {hasStaged && !isUploading && (
           <div className="max-h-48 space-y-2 overflow-y-auto">
-            {files.map((uploadFile) => (
+            {stagedFiles.map((stagedFile) => (
+              <div
+                key={stagedFile.id}
+                className="flex items-center gap-3 rounded-lg border border-border p-2.5"
+              >
+                <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted">
+                  <HugeiconsIcon
+                    icon={File01Icon}
+                    strokeWidth={2}
+                    className="size-4 text-muted-foreground"
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">
+                    {stagedFile.file.name}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {(stagedFile.file.size / 1024 / 1024).toFixed(1)} MB
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeFile(stagedFile.id);
+                  }}
+                >
+                  <HugeiconsIcon
+                    icon={Cancel01Icon}
+                    strokeWidth={2}
+                    className="size-3.5"
+                  />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Uploading / uploaded files (from pushduck) */}
+        {hasUploaded && (
+          <div className="max-h-48 space-y-2 overflow-y-auto">
+            {uploadedFiles.map((uploadFile) => (
               <div
                 key={uploadFile.id}
                 className="flex items-center gap-3 rounded-lg border border-border p-2.5"
@@ -290,10 +277,10 @@ export function UploadDialog({
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">
-                    {uploadFile.file.name}
+                    {uploadFile.name}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {(uploadFile.file.size / 1024 / 1024).toFixed(1)} MB
+                    {(uploadFile.size / 1024 / 1024).toFixed(1)} MB
                     {uploadFile.error && (
                       <span className="text-destructive">
                         {" "}
@@ -308,24 +295,17 @@ export function UploadDialog({
                     />
                   )}
                 </div>
-                {uploadFile.status === "pending" && (
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removeFile(uploadFile.id);
-                    }}
-                  >
-                    <HugeiconsIcon
-                      icon={Cancel01Icon}
-                      strokeWidth={2}
-                      className="size-3.5"
-                    />
-                  </Button>
-                )}
               </div>
             ))}
+            {/* Overall progress */}
+            {isUploading && progress !== undefined && (
+              <div className="pt-1">
+                <Progress value={progress} className="h-1.5" />
+                <p className="mt-1 text-center text-xs text-muted-foreground">
+                  {Math.round(progress)}% complete
+                </p>
+              </div>
+            )}
           </div>
         )}
 
@@ -337,11 +317,11 @@ export function UploadDialog({
           >
             {allDone && hasFiles ? "Close" : "Cancel"}
           </Button>
-          {hasPending && (
-            <Button onClick={uploadFiles} disabled={isUploading}>
+          {hasStaged && (
+            <Button onClick={handleUpload} disabled={isUploading}>
               {isUploading
                 ? "Uploading..."
-                : `Upload ${files.filter((f) => f.status === "pending").length} file(s)`}
+                : `Upload ${stagedFiles.length} file(s)`}
             </Button>
           )}
         </DialogFooter>
