@@ -200,8 +200,8 @@ function ChatPage() {
       () =>
         new TextStreamChatTransport({
           api: `${API_URL}/chat/conversations/_/messages`,
-          headers: (): Record<string, string> => {
-            const token = window.__clerk_token;
+          headers: async (): Promise<Record<string, string>> => {
+            const token = await window.__clerk_getToken?.();
             if (token) return { Authorization: `Bearer ${token}` };
             return {};
           },
@@ -414,19 +414,11 @@ function ChatPage() {
     // Create conversation if none is active
     if (!conversationId) {
       try {
-        const res = await api.chat.conversations.post({});
-        if (res.data && "success" in res.data && res.data.success) {
-          const conversation = normalizeConversation(
-            res.data.data as Conversation,
-          );
-          queryClient.invalidateQueries({ queryKey: ["conversations"] });
-          conversationId = conversation.id;
-          // Update ref immediately so the transport uses the new ID
-          activeConversationIdRef.current = conversationId;
-          setActiveConversationId(conversationId);
-        }
-      } catch (err) {
-        console.error("Failed to create conversation:", err);
+        const conversation = await createConversationMutation.mutateAsync();
+        conversationId = conversation.id;
+        // Update ref immediately so the transport uses the new ID
+        activeConversationIdRef.current = conversationId;
+      } catch {
         return;
       }
     }
