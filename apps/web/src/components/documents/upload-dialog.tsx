@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   CloudUploadIcon,
@@ -53,11 +54,25 @@ export function UploadDialog({
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const createDocumentMutation = useMutation({
+    mutationFn: async (params: {
+      name: string;
+      mimeType: string;
+      fileSize: number;
+      s3Key: string;
+      s3Url: string;
+      folderId?: string;
+    }) => {
+      const { data, error } = await api.documents.post(params);
+      if (error) throw new Error("Failed to create document record");
+      return data;
+    },
+  });
+
   const {
     uploadFiles: pushduckUpload,
     files: uploadedFiles,
     isUploading,
-    progress,
     reset: resetUpload,
   } = uploadClient.documentUpload({
     onSuccess: async (results) => {
@@ -66,7 +81,7 @@ export function UploadDialog({
       for (const result of results) {
         if (result.url && result.key) {
           try {
-            await api.documents.post({
+            await createDocumentMutation.mutateAsync({
               name: result.name,
               mimeType: result.type,
               fileSize: result.size,
@@ -74,11 +89,7 @@ export function UploadDialog({
               s3Url: result.url,
               folderId: folderId || undefined,
             });
-          } catch (err) {
-            console.error(
-              `Failed to create document record for "${result.name}":`,
-              err,
-            );
+          } catch {
             errors.push(result.name);
           }
         }
@@ -311,15 +322,6 @@ export function UploadDialog({
                 </div>
               </div>
             ))}
-            {/* Overall progress */}
-            {isUploading && progress !== undefined && (
-              <div className="pt-1">
-                <Progress value={progress} className="h-1.5" />
-                <p className="mt-1 text-center text-xs text-muted-foreground">
-                  {Math.round(progress)}% complete
-                </p>
-              </div>
-            )}
           </div>
         )}
 
