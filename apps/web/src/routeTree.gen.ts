@@ -18,6 +18,10 @@ import { Route as AuthenticatedExamsRouteImport } from './routes/_authenticated/
 import { Route as AuthenticatedDocumentsRouteImport } from './routes/_authenticated/documents'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedChatRouteImport } from './routes/_authenticated/chat'
+import { Route as AuthenticatedExamsIndexRouteImport } from './routes/_authenticated/exams/index'
+import { Route as AuthenticatedExamsNewRouteImport } from './routes/_authenticated/exams/new'
+import { Route as AuthenticatedExamsExamIdIndexRouteImport } from './routes/_authenticated/exams/$examId/index'
+import { Route as AuthenticatedExamsExamIdResultsRouteImport } from './routes/_authenticated/exams/$examId/results'
 
 const SignUpRoute = SignUpRouteImport.update({
   id: '/sign-up',
@@ -63,6 +67,28 @@ const AuthenticatedChatRoute = AuthenticatedChatRouteImport.update({
   path: '/chat',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedExamsIndexRoute = AuthenticatedExamsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthenticatedExamsRoute,
+} as any)
+const AuthenticatedExamsNewRoute = AuthenticatedExamsNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => AuthenticatedExamsRoute,
+} as any)
+const AuthenticatedExamsExamIdIndexRoute =
+  AuthenticatedExamsExamIdIndexRouteImport.update({
+    id: '/$examId/',
+    path: '/$examId/',
+    getParentRoute: () => AuthenticatedExamsRoute,
+  } as any)
+const AuthenticatedExamsExamIdResultsRoute =
+  AuthenticatedExamsExamIdResultsRouteImport.update({
+    id: '/$examId/results',
+    path: '/$examId/results',
+    getParentRoute: () => AuthenticatedExamsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -71,8 +97,12 @@ export interface FileRoutesByFullPath {
   '/chat': typeof AuthenticatedChatRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/documents': typeof AuthenticatedDocumentsRoute
-  '/exams': typeof AuthenticatedExamsRoute
+  '/exams': typeof AuthenticatedExamsRouteWithChildren
   '/flashcards': typeof AuthenticatedFlashcardsRoute
+  '/exams/new': typeof AuthenticatedExamsNewRoute
+  '/exams/': typeof AuthenticatedExamsIndexRoute
+  '/exams/$examId/results': typeof AuthenticatedExamsExamIdResultsRoute
+  '/exams/$examId/': typeof AuthenticatedExamsExamIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -81,8 +111,11 @@ export interface FileRoutesByTo {
   '/chat': typeof AuthenticatedChatRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/documents': typeof AuthenticatedDocumentsRoute
-  '/exams': typeof AuthenticatedExamsRoute
   '/flashcards': typeof AuthenticatedFlashcardsRoute
+  '/exams/new': typeof AuthenticatedExamsNewRoute
+  '/exams': typeof AuthenticatedExamsIndexRoute
+  '/exams/$examId/results': typeof AuthenticatedExamsExamIdResultsRoute
+  '/exams/$examId': typeof AuthenticatedExamsExamIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -93,8 +126,12 @@ export interface FileRoutesById {
   '/_authenticated/chat': typeof AuthenticatedChatRoute
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/documents': typeof AuthenticatedDocumentsRoute
-  '/_authenticated/exams': typeof AuthenticatedExamsRoute
+  '/_authenticated/exams': typeof AuthenticatedExamsRouteWithChildren
   '/_authenticated/flashcards': typeof AuthenticatedFlashcardsRoute
+  '/_authenticated/exams/new': typeof AuthenticatedExamsNewRoute
+  '/_authenticated/exams/': typeof AuthenticatedExamsIndexRoute
+  '/_authenticated/exams/$examId/results': typeof AuthenticatedExamsExamIdResultsRoute
+  '/_authenticated/exams/$examId/': typeof AuthenticatedExamsExamIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -107,6 +144,10 @@ export interface FileRouteTypes {
     | '/documents'
     | '/exams'
     | '/flashcards'
+    | '/exams/new'
+    | '/exams/'
+    | '/exams/$examId/results'
+    | '/exams/$examId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -115,8 +156,11 @@ export interface FileRouteTypes {
     | '/chat'
     | '/dashboard'
     | '/documents'
-    | '/exams'
     | '/flashcards'
+    | '/exams/new'
+    | '/exams'
+    | '/exams/$examId/results'
+    | '/exams/$examId'
   id:
     | '__root__'
     | '/'
@@ -128,6 +172,10 @@ export interface FileRouteTypes {
     | '/_authenticated/documents'
     | '/_authenticated/exams'
     | '/_authenticated/flashcards'
+    | '/_authenticated/exams/new'
+    | '/_authenticated/exams/'
+    | '/_authenticated/exams/$examId/results'
+    | '/_authenticated/exams/$examId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -202,14 +250,59 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedChatRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/exams/': {
+      id: '/_authenticated/exams/'
+      path: '/'
+      fullPath: '/exams/'
+      preLoaderRoute: typeof AuthenticatedExamsIndexRouteImport
+      parentRoute: typeof AuthenticatedExamsRoute
+    }
+    '/_authenticated/exams/new': {
+      id: '/_authenticated/exams/new'
+      path: '/new'
+      fullPath: '/exams/new'
+      preLoaderRoute: typeof AuthenticatedExamsNewRouteImport
+      parentRoute: typeof AuthenticatedExamsRoute
+    }
+    '/_authenticated/exams/$examId/': {
+      id: '/_authenticated/exams/$examId/'
+      path: '/$examId'
+      fullPath: '/exams/$examId/'
+      preLoaderRoute: typeof AuthenticatedExamsExamIdIndexRouteImport
+      parentRoute: typeof AuthenticatedExamsRoute
+    }
+    '/_authenticated/exams/$examId/results': {
+      id: '/_authenticated/exams/$examId/results'
+      path: '/$examId/results'
+      fullPath: '/exams/$examId/results'
+      preLoaderRoute: typeof AuthenticatedExamsExamIdResultsRouteImport
+      parentRoute: typeof AuthenticatedExamsRoute
+    }
   }
 }
+
+interface AuthenticatedExamsRouteChildren {
+  AuthenticatedExamsNewRoute: typeof AuthenticatedExamsNewRoute
+  AuthenticatedExamsIndexRoute: typeof AuthenticatedExamsIndexRoute
+  AuthenticatedExamsExamIdResultsRoute: typeof AuthenticatedExamsExamIdResultsRoute
+  AuthenticatedExamsExamIdIndexRoute: typeof AuthenticatedExamsExamIdIndexRoute
+}
+
+const AuthenticatedExamsRouteChildren: AuthenticatedExamsRouteChildren = {
+  AuthenticatedExamsNewRoute: AuthenticatedExamsNewRoute,
+  AuthenticatedExamsIndexRoute: AuthenticatedExamsIndexRoute,
+  AuthenticatedExamsExamIdResultsRoute: AuthenticatedExamsExamIdResultsRoute,
+  AuthenticatedExamsExamIdIndexRoute: AuthenticatedExamsExamIdIndexRoute,
+}
+
+const AuthenticatedExamsRouteWithChildren =
+  AuthenticatedExamsRoute._addFileChildren(AuthenticatedExamsRouteChildren)
 
 interface AuthenticatedRouteChildren {
   AuthenticatedChatRoute: typeof AuthenticatedChatRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedDocumentsRoute: typeof AuthenticatedDocumentsRoute
-  AuthenticatedExamsRoute: typeof AuthenticatedExamsRoute
+  AuthenticatedExamsRoute: typeof AuthenticatedExamsRouteWithChildren
   AuthenticatedFlashcardsRoute: typeof AuthenticatedFlashcardsRoute
 }
 
@@ -217,7 +310,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedChatRoute: AuthenticatedChatRoute,
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedDocumentsRoute: AuthenticatedDocumentsRoute,
-  AuthenticatedExamsRoute: AuthenticatedExamsRoute,
+  AuthenticatedExamsRoute: AuthenticatedExamsRouteWithChildren,
   AuthenticatedFlashcardsRoute: AuthenticatedFlashcardsRoute,
 }
 
