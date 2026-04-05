@@ -2,6 +2,7 @@ import { Queue } from "bullmq";
 import { redisConnection } from "./redis";
 import type {
   DocumentProcessingJob,
+  ExamGenerationJob,
   ExamGradingJob,
   FlashcardGenerationJob,
 } from "@repo/shared";
@@ -12,6 +13,7 @@ import type {
 
 export const QUEUE_NAMES = {
   DOCUMENT_PROCESSING: "document-processing",
+  EXAM_GENERATION: "exam-generation",
   EXAM_GRADING: "exam-grading",
   FLASHCARD_GENERATION: "flashcard-generation",
 } as const;
@@ -26,6 +28,22 @@ export const documentProcessingQueue = new Queue<DocumentProcessingJob>(
     connection: redisConnection,
     defaultJobOptions: {
       attempts: 3,
+      backoff: {
+        type: "exponential",
+        delay: 5000,
+      },
+      removeOnComplete: { count: 100 },
+      removeOnFail: { count: 50 },
+    },
+  },
+);
+
+export const examGenerationQueue = new Queue<ExamGenerationJob>(
+  QUEUE_NAMES.EXAM_GENERATION,
+  {
+    connection: redisConnection,
+    defaultJobOptions: {
+      attempts: 2,
       backoff: {
         type: "exponential",
         delay: 5000,

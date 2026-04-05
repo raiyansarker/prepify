@@ -8,6 +8,8 @@ import { uploadRoutes } from "#/routes/upload";
 import { folderRoutes } from "#/routes/folders";
 import { documentRoutes } from "#/routes/documents";
 import { chatRoutes } from "#/routes/chat";
+import { examWsRoutes } from "#/routes/exam-ws";
+import { examRoutes } from "#/routes/exams";
 
 // ============================================
 // Validate environment variables (fail fast)
@@ -90,6 +92,8 @@ const app = new Elysia()
   .use(folderRoutes)
   .use(documentRoutes)
   .use(chatRoutes)
+  .use(examRoutes)
+  .use(examWsRoutes)
   .listen(config.server.port);
 
 apiLogger.info(

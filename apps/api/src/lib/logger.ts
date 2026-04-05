@@ -87,7 +87,7 @@ function formatLog(
   return `${timestamp.slice(11, 19)} [${level.toUpperCase()}] [${component}] ${message}${contextStr}`;
 }
 
-function createLogger(component: string) {
+export function createLogger(component: string) {
   return {
     debug(messageOrCtx: string | LogContext, maybeMessage?: string) {
       const level = getLogLevel();
@@ -121,3 +121,5 @@ export const workerLogger = createLogger("worker");
 export const authLogger = createLogger("auth");
 export const chatLogger = createLogger("chat");
 export const dbLogger = createLogger("db");
+export const wsLogger = createLogger("ws");
+export const pubsubLogger = createLogger("pubsub");
