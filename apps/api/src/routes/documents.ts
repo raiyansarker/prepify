@@ -2,7 +2,7 @@ import { Elysia, t } from "elysia";
 import { Effect } from "effect";
 import { eq, and, isNull, desc } from "drizzle-orm";
 import { db } from "#/db";
-import { documents, folders } from "#/db/schema";
+import { documents, documentChunks, folders } from "#/db/schema";
 import { requireAuth } from "#/middleware/auth";
 import { documentProcessingQueue } from "#/lib/queues";
 import {
@@ -105,6 +105,35 @@ const enqueueProcessing = (documentId: string, userId: string) =>
       new ExternalServiceError({
         service: "BullMQ",
         message: "Failed to enqueue document processing",
+        cause,
+      }),
+  });
+
+const deleteDocumentChunks = (documentId: string) =>
+  Effect.tryPromise({
+    try: () =>
+      db
+        .delete(documentChunks)
+        .where(eq(documentChunks.documentId, documentId)),
+    catch: (cause) =>
+      new DatabaseError({
+        message: "Failed to delete document chunks",
+        cause,
+      }),
+  });
+
+const enqueueRetryProcessing = (documentId: string, userId: string) =>
+  Effect.tryPromise({
+    try: () =>
+      documentProcessingQueue.add(
+        "process",
+        { documentId, userId },
+        { jobId: `doc-${documentId}-retry-${Date.now()}` },
+      ),
+    catch: (cause) =>
+      new ExternalServiceError({
+        service: "BullMQ",
+        message: "Failed to enqueue document retry processing",
         cause,
       }),
   });
@@ -306,6 +335,57 @@ export const documentRoutes = new Elysia({ prefix: "/documents" })
           );
 
           return { success: true as const, data: { id: ctx.params.id } };
+        }),
+      );
+    },
+    {
+      params: t.Object({
+        id: t.String(),
+      }),
+    },
+  )
+
+  // Retry a failed document processing job
+  .post(
+    "/:id/retry",
+    async (ctx) => {
+      const auth = (ctx as unknown as { auth: Auth }).auth;
+
+      return effectHandler(
+        ctx,
+        Effect.gen(function* () {
+          const document = yield* findDocument(ctx.params.id, auth.userId);
+          if (!document) {
+            return yield* new NotFoundError({
+              entity: "Document",
+              id: ctx.params.id,
+            });
+          }
+
+          if (document.status !== "failed") {
+            return yield* new NotFoundError({
+              entity: "Document",
+              id: ctx.params.id,
+            });
+          }
+
+          // Delete any partial chunks from the failed processing
+          yield* deleteDocumentChunks(ctx.params.id);
+
+          // Reset status to pending
+          const [updated] = yield* updateDocument(ctx.params.id, {
+            status: "pending",
+            updatedAt: new Date(),
+          });
+
+          // Re-enqueue with a unique job ID
+          yield* enqueueRetryProcessing(ctx.params.id, auth.userId);
+
+          yield* Effect.logInfo("Document retry enqueued").pipe(
+            Effect.annotateLogs("documentId", ctx.params.id),
+          );
+
+          return { success: true as const, data: updated! };
         }),
       );
     },
