@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -150,6 +150,7 @@ function StartExamPage() {
   });
 
   const sessionId = sessionQuery.data?.id;
+  const session = sessionQuery.data;
 
   const submitAnswerMutation = useMutation({
     mutationFn: async (payload: { questionId: string; userAnswer: string }) => {
@@ -166,6 +167,7 @@ function StartExamPage() {
   const submitExamMutation = useMutation({
     mutationFn: async () => {
       if (!sessionId) throw new Error("No active session");
+      await persistDraftAnswers();
       const res = await api.exams.sessions({ sessionId }).submit.post({});
       if (res.data?.success) {
         return res.data as {
@@ -202,13 +204,57 @@ function StartExamPage() {
   }, [sessionId, subscribeSession, unsubscribeSession]);
 
   const exam = examQuery.data;
-  const session = sessionQuery.data;
   const timerState = sessionId ? timers.get(sessionId) : undefined;
 
   const orderedQuestions = useMemo(() => {
     if (!exam) return [] as ExamQuestion[];
     return [...exam.questions].sort((a, b) => a.orderIndex - b.orderIndex);
   }, [exam]);
+
+  const persistDraftAnswers = useCallback(async () => {
+    if (!sessionId) throw new Error("No active session");
+
+    const existingAnswerMap = new Map(
+      (session?.answers ?? []).map((answer) => [
+        answer.questionId,
+        answer.userAnswer ?? "",
+      ]),
+    );
+
+    for (const question of orderedQuestions) {
+      if (question.type === "mcq") {
+        const selectedOption = mcqAnswers[question.id];
+        if (!selectedOption) continue;
+
+        const existingValue = existingAnswerMap.get(question.id) ?? "";
+        if (existingValue === selectedOption) continue;
+
+        await submitAnswerMutation.mutateAsync({
+          questionId: question.id,
+          userAnswer: selectedOption,
+        });
+        continue;
+      }
+
+      const draftAnswer = writtenAnswers[question.id]?.trim();
+      if (!draftAnswer) continue;
+
+      const existingValue = (existingAnswerMap.get(question.id) ?? "").trim();
+      if (existingValue === draftAnswer) continue;
+
+      await submitAnswerMutation.mutateAsync({
+        questionId: question.id,
+        userAnswer: draftAnswer,
+      });
+    }
+  }, [
+    mcqAnswers,
+    orderedQuestions,
+    session?.answers,
+    sessionId,
+    submitAnswerMutation,
+    writtenAnswers,
+  ]);
 
   const activeQuestion = orderedQuestions[questionIndex] ?? null;
 
@@ -625,7 +671,10 @@ function StartExamPage() {
                     <Button
                       size="sm"
                       onClick={() => submitExamMutation.mutate()}
-                      disabled={submitExamMutation.isPending}
+                      disabled={
+                        submitExamMutation.isPending ||
+                        submitAnswerMutation.isPending
+                      }
                     >
                       {submitExamMutation.isPending
                         ? "Submitting..."
