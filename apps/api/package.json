@@ -16,6 +16,7 @@
     "worker:dev:documents": "bun run --watch src/workers/document-processing.ts",
     "worker:dev:exam-generation": "bun run --watch src/workers/exam-generation.ts",
     "worker:dev:exam-grading": "bun run --watch src/workers/exam-grading.ts",
+    "worker:dev:flashcards": "bun run --watch src/workers/flashcard-generation.ts",
     "build:worker": "bun build src/workers/index.ts --outdir ./dist --target bun"
   },
   "dependencies": {

@@ -10,6 +10,7 @@ import { documentRoutes } from "#/routes/documents";
 import { chatRoutes } from "#/routes/chat";
 import { examWsRoutes } from "#/routes/exam-ws";
 import { examRoutes } from "#/routes/exams";
+import { flashcardRoutes } from "#/routes/flashcards";
 
 // ============================================
 // Validate environment variables (fail fast)
@@ -93,6 +94,7 @@ const app = new Elysia()
   .use(documentRoutes)
   .use(chatRoutes)
   .use(examRoutes)
+  .use(flashcardRoutes)
   .use(examWsRoutes)
   .listen(config.server.port);
 
