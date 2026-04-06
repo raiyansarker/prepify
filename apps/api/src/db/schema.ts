@@ -73,6 +73,12 @@ export const flashcardDifficultyEnum = pgEnum("flashcard_difficulty", [
   "hard",
 ]);
 
+export const flashcardDeckStatusEnum = pgEnum("flashcard_deck_status", [
+  "generating",
+  "ready",
+  "failed",
+]);
+
 export const chatRoleEnum = pgEnum("chat_role", [
   "user",
   "assistant",
@@ -359,6 +365,8 @@ export const flashcardDecks = pgTable(
     title: text("title").notNull(),
     topic: text("topic").notNull(),
     description: text("description"),
+    status: flashcardDeckStatusEnum("status").notNull().default("generating"),
+    errorMessage: text("error_message"),
     cardCount: integer("card_count").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

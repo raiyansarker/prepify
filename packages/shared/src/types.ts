@@ -26,7 +26,36 @@ export type ExamSessionStatus = "in_progress" | "submitted" | "timed_out";
 // Flashcard Types
 // ============================================
 
+export type FlashcardDeckStatus = "generating" | "ready" | "failed";
 export type FlashcardDifficulty = "easy" | "medium" | "hard";
+export type FlashcardReviewRating = "again" | "hard" | "good" | "easy";
+
+export type FlashcardDeck = {
+  id: string;
+  userId: string;
+  title: string;
+  topic: string;
+  description: string | null;
+  status: FlashcardDeckStatus;
+  errorMessage: string | null;
+  cardCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Flashcard = {
+  id: string;
+  deckId: string;
+  front: string;
+  back: string;
+  difficulty: FlashcardDifficulty;
+  nextReviewAt: string;
+  interval: number;
+  easeFactor: number;
+  repetitions: number;
+  createdAt: string;
+  updatedAt: string;
+};
 
 // ============================================
 // Chat Types
