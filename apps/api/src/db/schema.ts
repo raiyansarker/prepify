@@ -13,10 +13,12 @@ import {
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { vector } from "drizzle-orm/pg-core";
+import { EMBEDDING_DIMENSIONS } from "#/lib/embedding-config";
 import type {
   McqOption,
   AiGradingResult,
   ExamResultFeedback,
+  AnswerAttachment,
 } from "@repo/shared";
 
 // ============================================
@@ -40,8 +42,10 @@ export const examTypeEnum = pgEnum("exam_type", ["mcq", "written", "mixed"]);
 
 export const examStatusEnum = pgEnum("exam_status", [
   "draft",
+  "generating",
   "active",
   "completed",
+  "failed",
 ]);
 
 export const examContextSourceEnum = pgEnum("exam_context_source", [
@@ -55,7 +59,7 @@ export const examDurationModeEnum = pgEnum("exam_duration_mode", [
   "ai_decided",
 ]);
 
-export const questionTypeEnum = pgEnum("question_type", ["mcq", "written"]);
+export const questionTypeEnum = pgEnum("question_type", ["mcq", "descriptive"]);
 
 export const examSessionStatusEnum = pgEnum("exam_session_status", [
   "in_progress",
@@ -123,6 +127,7 @@ export const documents = pgTable(
     s3Url: text("s3_url").notNull(),
     status: documentStatusEnum("status").notNull().default("pending"),
     pageCount: integer("page_count"),
+    extractedText: text("extracted_text"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -151,7 +156,7 @@ export const documentChunks = pgTable(
       .notNull()
       .references(() => documents.id, { onDelete: "cascade" }),
     content: text("content").notNull(),
-    embedding: vector("embedding", { dimensions: 768 }),
+    embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     chunkIndex: integer("chunk_index").notNull(),
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -237,6 +242,7 @@ export const questions = pgTable(
       .notNull()
       .references(() => exams.id, { onDelete: "cascade" }),
     type: questionTypeEnum("type").notNull(),
+    topic: text("topic"),
     content: text("content").notNull(),
     options: jsonb("options").$type<McqOption[]>(),
     correctAnswer: text("correct_answer").notNull(),
@@ -301,6 +307,8 @@ export const answers = pgTable(
       .notNull()
       .references(() => questions.id, { onDelete: "cascade" }),
     userAnswer: text("user_answer"),
+    attachments: jsonb("attachments").$type<AnswerAttachment[]>(),
+    extractedText: text("extracted_text"),
     isCorrect: boolean("is_correct"),
     score: real("score"),
     aiGrading: jsonb("ai_grading").$type<AiGradingResult>(),
