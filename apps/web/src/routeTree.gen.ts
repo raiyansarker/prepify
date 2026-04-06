@@ -18,9 +18,13 @@ import { Route as AuthenticatedExamsRouteImport } from './routes/_authenticated/
 import { Route as AuthenticatedDocumentsRouteImport } from './routes/_authenticated/documents'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedChatRouteImport } from './routes/_authenticated/chat'
+import { Route as AuthenticatedFlashcardsIndexRouteImport } from './routes/_authenticated/flashcards/index'
 import { Route as AuthenticatedExamsIndexRouteImport } from './routes/_authenticated/exams/index'
+import { Route as AuthenticatedFlashcardsNewRouteImport } from './routes/_authenticated/flashcards/new'
 import { Route as AuthenticatedExamsNewRouteImport } from './routes/_authenticated/exams/new'
+import { Route as AuthenticatedFlashcardsDeckIdIndexRouteImport } from './routes/_authenticated/flashcards/$deckId/index'
 import { Route as AuthenticatedExamsExamIdIndexRouteImport } from './routes/_authenticated/exams/$examId/index'
+import { Route as AuthenticatedFlashcardsDeckIdStudyRouteImport } from './routes/_authenticated/flashcards/$deckId/study'
 import { Route as AuthenticatedExamsExamIdStartRouteImport } from './routes/_authenticated/exams/$examId/start'
 import { Route as AuthenticatedExamsExamIdResultsRouteImport } from './routes/_authenticated/exams/$examId/results'
 import { Route as AuthenticatedExamsExamIdResultsIndexRouteImport } from './routes/_authenticated/exams/$examId/results/index'
@@ -71,21 +75,45 @@ const AuthenticatedChatRoute = AuthenticatedChatRouteImport.update({
   path: '/chat',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedFlashcardsIndexRoute =
+  AuthenticatedFlashcardsIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AuthenticatedFlashcardsRoute,
+  } as any)
 const AuthenticatedExamsIndexRoute = AuthenticatedExamsIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AuthenticatedExamsRoute,
 } as any)
+const AuthenticatedFlashcardsNewRoute =
+  AuthenticatedFlashcardsNewRouteImport.update({
+    id: '/new',
+    path: '/new',
+    getParentRoute: () => AuthenticatedFlashcardsRoute,
+  } as any)
 const AuthenticatedExamsNewRoute = AuthenticatedExamsNewRouteImport.update({
   id: '/new',
   path: '/new',
   getParentRoute: () => AuthenticatedExamsRoute,
 } as any)
+const AuthenticatedFlashcardsDeckIdIndexRoute =
+  AuthenticatedFlashcardsDeckIdIndexRouteImport.update({
+    id: '/$deckId/',
+    path: '/$deckId/',
+    getParentRoute: () => AuthenticatedFlashcardsRoute,
+  } as any)
 const AuthenticatedExamsExamIdIndexRoute =
   AuthenticatedExamsExamIdIndexRouteImport.update({
     id: '/$examId/',
     path: '/$examId/',
     getParentRoute: () => AuthenticatedExamsRoute,
+  } as any)
+const AuthenticatedFlashcardsDeckIdStudyRoute =
+  AuthenticatedFlashcardsDeckIdStudyRouteImport.update({
+    id: '/$deckId/study',
+    path: '/$deckId/study',
+    getParentRoute: () => AuthenticatedFlashcardsRoute,
   } as any)
 const AuthenticatedExamsExamIdStartRoute =
   AuthenticatedExamsExamIdStartRouteImport.update({
@@ -126,12 +154,16 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/documents': typeof AuthenticatedDocumentsRoute
   '/exams': typeof AuthenticatedExamsRouteWithChildren
-  '/flashcards': typeof AuthenticatedFlashcardsRoute
+  '/flashcards': typeof AuthenticatedFlashcardsRouteWithChildren
   '/exams/new': typeof AuthenticatedExamsNewRoute
+  '/flashcards/new': typeof AuthenticatedFlashcardsNewRoute
   '/exams/': typeof AuthenticatedExamsIndexRoute
+  '/flashcards/': typeof AuthenticatedFlashcardsIndexRoute
   '/exams/$examId/results': typeof AuthenticatedExamsExamIdResultsRouteWithChildren
   '/exams/$examId/start': typeof AuthenticatedExamsExamIdStartRoute
+  '/flashcards/$deckId/study': typeof AuthenticatedFlashcardsDeckIdStudyRoute
   '/exams/$examId/': typeof AuthenticatedExamsExamIdIndexRoute
+  '/flashcards/$deckId/': typeof AuthenticatedFlashcardsDeckIdIndexRoute
   '/exams/$examId/results/error': typeof AuthenticatedExamsExamIdResultsErrorRoute
   '/exams/$examId/results/pending': typeof AuthenticatedExamsExamIdResultsPendingRoute
   '/exams/$examId/results/': typeof AuthenticatedExamsExamIdResultsIndexRoute
@@ -143,11 +175,14 @@ export interface FileRoutesByTo {
   '/chat': typeof AuthenticatedChatRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/documents': typeof AuthenticatedDocumentsRoute
-  '/flashcards': typeof AuthenticatedFlashcardsRoute
   '/exams/new': typeof AuthenticatedExamsNewRoute
+  '/flashcards/new': typeof AuthenticatedFlashcardsNewRoute
   '/exams': typeof AuthenticatedExamsIndexRoute
+  '/flashcards': typeof AuthenticatedFlashcardsIndexRoute
   '/exams/$examId/start': typeof AuthenticatedExamsExamIdStartRoute
+  '/flashcards/$deckId/study': typeof AuthenticatedFlashcardsDeckIdStudyRoute
   '/exams/$examId': typeof AuthenticatedExamsExamIdIndexRoute
+  '/flashcards/$deckId': typeof AuthenticatedFlashcardsDeckIdIndexRoute
   '/exams/$examId/results/error': typeof AuthenticatedExamsExamIdResultsErrorRoute
   '/exams/$examId/results/pending': typeof AuthenticatedExamsExamIdResultsPendingRoute
   '/exams/$examId/results': typeof AuthenticatedExamsExamIdResultsIndexRoute
@@ -162,12 +197,16 @@ export interface FileRoutesById {
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/documents': typeof AuthenticatedDocumentsRoute
   '/_authenticated/exams': typeof AuthenticatedExamsRouteWithChildren
-  '/_authenticated/flashcards': typeof AuthenticatedFlashcardsRoute
+  '/_authenticated/flashcards': typeof AuthenticatedFlashcardsRouteWithChildren
   '/_authenticated/exams/new': typeof AuthenticatedExamsNewRoute
+  '/_authenticated/flashcards/new': typeof AuthenticatedFlashcardsNewRoute
   '/_authenticated/exams/': typeof AuthenticatedExamsIndexRoute
+  '/_authenticated/flashcards/': typeof AuthenticatedFlashcardsIndexRoute
   '/_authenticated/exams/$examId/results': typeof AuthenticatedExamsExamIdResultsRouteWithChildren
   '/_authenticated/exams/$examId/start': typeof AuthenticatedExamsExamIdStartRoute
+  '/_authenticated/flashcards/$deckId/study': typeof AuthenticatedFlashcardsDeckIdStudyRoute
   '/_authenticated/exams/$examId/': typeof AuthenticatedExamsExamIdIndexRoute
+  '/_authenticated/flashcards/$deckId/': typeof AuthenticatedFlashcardsDeckIdIndexRoute
   '/_authenticated/exams/$examId/results/error': typeof AuthenticatedExamsExamIdResultsErrorRoute
   '/_authenticated/exams/$examId/results/pending': typeof AuthenticatedExamsExamIdResultsPendingRoute
   '/_authenticated/exams/$examId/results/': typeof AuthenticatedExamsExamIdResultsIndexRoute
@@ -184,10 +223,14 @@ export interface FileRouteTypes {
     | '/exams'
     | '/flashcards'
     | '/exams/new'
+    | '/flashcards/new'
     | '/exams/'
+    | '/flashcards/'
     | '/exams/$examId/results'
     | '/exams/$examId/start'
+    | '/flashcards/$deckId/study'
     | '/exams/$examId/'
+    | '/flashcards/$deckId/'
     | '/exams/$examId/results/error'
     | '/exams/$examId/results/pending'
     | '/exams/$examId/results/'
@@ -199,11 +242,14 @@ export interface FileRouteTypes {
     | '/chat'
     | '/dashboard'
     | '/documents'
-    | '/flashcards'
     | '/exams/new'
+    | '/flashcards/new'
     | '/exams'
+    | '/flashcards'
     | '/exams/$examId/start'
+    | '/flashcards/$deckId/study'
     | '/exams/$examId'
+    | '/flashcards/$deckId'
     | '/exams/$examId/results/error'
     | '/exams/$examId/results/pending'
     | '/exams/$examId/results'
@@ -219,10 +265,14 @@ export interface FileRouteTypes {
     | '/_authenticated/exams'
     | '/_authenticated/flashcards'
     | '/_authenticated/exams/new'
+    | '/_authenticated/flashcards/new'
     | '/_authenticated/exams/'
+    | '/_authenticated/flashcards/'
     | '/_authenticated/exams/$examId/results'
     | '/_authenticated/exams/$examId/start'
+    | '/_authenticated/flashcards/$deckId/study'
     | '/_authenticated/exams/$examId/'
+    | '/_authenticated/flashcards/$deckId/'
     | '/_authenticated/exams/$examId/results/error'
     | '/_authenticated/exams/$examId/results/pending'
     | '/_authenticated/exams/$examId/results/'
@@ -300,12 +350,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedChatRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/flashcards/': {
+      id: '/_authenticated/flashcards/'
+      path: '/'
+      fullPath: '/flashcards/'
+      preLoaderRoute: typeof AuthenticatedFlashcardsIndexRouteImport
+      parentRoute: typeof AuthenticatedFlashcardsRoute
+    }
     '/_authenticated/exams/': {
       id: '/_authenticated/exams/'
       path: '/'
       fullPath: '/exams/'
       preLoaderRoute: typeof AuthenticatedExamsIndexRouteImport
       parentRoute: typeof AuthenticatedExamsRoute
+    }
+    '/_authenticated/flashcards/new': {
+      id: '/_authenticated/flashcards/new'
+      path: '/new'
+      fullPath: '/flashcards/new'
+      preLoaderRoute: typeof AuthenticatedFlashcardsNewRouteImport
+      parentRoute: typeof AuthenticatedFlashcardsRoute
     }
     '/_authenticated/exams/new': {
       id: '/_authenticated/exams/new'
@@ -314,12 +378,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedExamsNewRouteImport
       parentRoute: typeof AuthenticatedExamsRoute
     }
+    '/_authenticated/flashcards/$deckId/': {
+      id: '/_authenticated/flashcards/$deckId/'
+      path: '/$deckId'
+      fullPath: '/flashcards/$deckId/'
+      preLoaderRoute: typeof AuthenticatedFlashcardsDeckIdIndexRouteImport
+      parentRoute: typeof AuthenticatedFlashcardsRoute
+    }
     '/_authenticated/exams/$examId/': {
       id: '/_authenticated/exams/$examId/'
       path: '/$examId'
       fullPath: '/exams/$examId/'
       preLoaderRoute: typeof AuthenticatedExamsExamIdIndexRouteImport
       parentRoute: typeof AuthenticatedExamsRoute
+    }
+    '/_authenticated/flashcards/$deckId/study': {
+      id: '/_authenticated/flashcards/$deckId/study'
+      path: '/$deckId/study'
+      fullPath: '/flashcards/$deckId/study'
+      preLoaderRoute: typeof AuthenticatedFlashcardsDeckIdStudyRouteImport
+      parentRoute: typeof AuthenticatedFlashcardsRoute
     }
     '/_authenticated/exams/$examId/start': {
       id: '/_authenticated/exams/$examId/start'
@@ -400,12 +478,34 @@ const AuthenticatedExamsRouteChildren: AuthenticatedExamsRouteChildren = {
 const AuthenticatedExamsRouteWithChildren =
   AuthenticatedExamsRoute._addFileChildren(AuthenticatedExamsRouteChildren)
 
+interface AuthenticatedFlashcardsRouteChildren {
+  AuthenticatedFlashcardsNewRoute: typeof AuthenticatedFlashcardsNewRoute
+  AuthenticatedFlashcardsIndexRoute: typeof AuthenticatedFlashcardsIndexRoute
+  AuthenticatedFlashcardsDeckIdStudyRoute: typeof AuthenticatedFlashcardsDeckIdStudyRoute
+  AuthenticatedFlashcardsDeckIdIndexRoute: typeof AuthenticatedFlashcardsDeckIdIndexRoute
+}
+
+const AuthenticatedFlashcardsRouteChildren: AuthenticatedFlashcardsRouteChildren =
+  {
+    AuthenticatedFlashcardsNewRoute: AuthenticatedFlashcardsNewRoute,
+    AuthenticatedFlashcardsIndexRoute: AuthenticatedFlashcardsIndexRoute,
+    AuthenticatedFlashcardsDeckIdStudyRoute:
+      AuthenticatedFlashcardsDeckIdStudyRoute,
+    AuthenticatedFlashcardsDeckIdIndexRoute:
+      AuthenticatedFlashcardsDeckIdIndexRoute,
+  }
+
+const AuthenticatedFlashcardsRouteWithChildren =
+  AuthenticatedFlashcardsRoute._addFileChildren(
+    AuthenticatedFlashcardsRouteChildren,
+  )
+
 interface AuthenticatedRouteChildren {
   AuthenticatedChatRoute: typeof AuthenticatedChatRoute
   AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
   AuthenticatedDocumentsRoute: typeof AuthenticatedDocumentsRoute
   AuthenticatedExamsRoute: typeof AuthenticatedExamsRouteWithChildren
-  AuthenticatedFlashcardsRoute: typeof AuthenticatedFlashcardsRoute
+  AuthenticatedFlashcardsRoute: typeof AuthenticatedFlashcardsRouteWithChildren
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
@@ -413,7 +513,7 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
   AuthenticatedDocumentsRoute: AuthenticatedDocumentsRoute,
   AuthenticatedExamsRoute: AuthenticatedExamsRouteWithChildren,
-  AuthenticatedFlashcardsRoute: AuthenticatedFlashcardsRoute,
+  AuthenticatedFlashcardsRoute: AuthenticatedFlashcardsRouteWithChildren,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
