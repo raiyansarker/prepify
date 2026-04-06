@@ -882,14 +882,32 @@ export const examRoutes = new Elysia({ prefix: "/exams" })
             });
           }
 
-          // Also fetch detailed answer data
+          const examQuestions = yield* findExamQuestions(session.examId);
           const sessionAnswers = yield* findAnswersForSession(session.id);
+          const answerMap = new Map(
+            sessionAnswers.map((answer) => [answer.questionId, answer]),
+          );
+
+          const answerDetails = examQuestions.map((question) => {
+            const answer = answerMap.get(question.id);
+
+            return {
+              id: answer?.id ?? `missing-${question.id}`,
+              questionId: question.id,
+              userAnswer: answer?.userAnswer ?? null,
+              extractedText: answer?.extractedText ?? null,
+              isCorrect: answer?.isCorrect ?? null,
+              score: answer?.score ?? null,
+              aiGrading: answer?.aiGrading ?? null,
+              question,
+            };
+          });
 
           return {
             success: true as const,
             data: {
               result,
-              answers: sessionAnswers,
+              answers: answerDetails,
             },
           };
         }),
