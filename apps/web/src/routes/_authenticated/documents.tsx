@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
@@ -18,6 +18,7 @@ import {
   Download04Icon,
   ViewIcon,
   Cancel01Icon,
+  RefreshIcon,
 } from "@hugeicons/core-free-icons";
 import { Button } from "#/components/ui/button";
 import {
@@ -84,11 +85,6 @@ function DocumentsPage() {
   const navigate = useNavigate();
   const currentFolderId = searchFolderId ?? null;
 
-  // Breadcrumb path - rebuilt from API when folderId changes
-  const [folderPath, setFolderPath] = useState<
-    { id: string | null; name: string }[]
-  >([{ id: null, name: "Documents" }]);
-
   const queryClient = useQueryClient();
 
   // Fetch the folder ancestor path when navigating to a folder from URL
@@ -108,13 +104,18 @@ function DocumentsPage() {
     staleTime: 5 * 60 * 1000, // cache for 5 minutes
   });
 
-  // Rebuild folderPath when ancestor data arrives or folderId changes
-  useEffect(() => {
+  // Breadcrumb path - derived from ancestor query data
+  const folderPath = useMemo(() => {
     if (!currentFolderId) {
-      setFolderPath([{ id: null, name: "Documents" }]);
-    } else if (ancestorPath && ancestorPath.length > 0) {
-      setFolderPath([{ id: null, name: "Documents" }, ...ancestorPath]);
+      return [{ id: null as string | null, name: "Documents" }];
     }
+    if (ancestorPath && ancestorPath.length > 0) {
+      return [
+        { id: null as string | null, name: "Documents" },
+        ...ancestorPath,
+      ];
+    }
+    return [{ id: null as string | null, name: "Documents" }];
   }, [currentFolderId, ancestorPath]);
 
   // Data queries
@@ -144,37 +145,15 @@ function DocumentsPage() {
       }
       return [];
     },
-  });
-
-  // Poll every 3 seconds when any document is still pending or processing
-  const hasInProgressDocuments = useMemo(
-    () =>
-      documents.some(
+    // Poll every 3s while any document is still pending/processing
+    refetchInterval: (query) => {
+      const docs = query.state.data;
+      if (!docs) return false;
+      const hasInProgress = docs.some(
         (doc) => doc.status === "pending" || doc.status === "processing",
-      ),
-    [documents],
-  );
-
-  // Polling query that only activates when documents are in-progress
-  useQuery({
-    queryKey: ["documents", currentFolderId, "poll"],
-    queryFn: async () => {
-      const res = await api.documents.get({
-        query: currentFolderId
-          ? { folderId: currentFolderId }
-          : { folderId: "root" },
-      });
-      if (res.data?.success) {
-        const freshData = (res.data as { success: true; data: Document[] })
-          .data;
-        // Update the main query cache with fresh data
-        queryClient.setQueryData(["documents", currentFolderId], freshData);
-        return freshData;
-      }
-      return [];
+      );
+      return hasInProgress ? 3000 : false;
     },
-    enabled: hasInProgressDocuments,
-    refetchInterval: hasInProgressDocuments ? 3000 : false,
   });
 
   const isLoading = foldersLoading || documentsLoading;
@@ -200,13 +179,11 @@ function DocumentsPage() {
 
   // Navigation
   const navigateToFolder = useCallback(
-    (folderId: string, folderName: string) => {
+    (folderId: string, _folderName: string) => {
       void navigate({
         to: "/documents",
         search: { folderId },
       });
-      // Optimistically extend breadcrumb (will be reconciled by useEffect)
-      setFolderPath((prev) => [...prev, { id: folderId, name: folderName }]);
     },
     [navigate],
   );
@@ -219,7 +196,6 @@ function DocumentsPage() {
           to: "/documents",
           search: { folderId: target.id ?? undefined },
         });
-        setFolderPath((prev) => prev.slice(0, index + 1));
       }
     },
     [folderPath, navigate],
@@ -276,6 +252,18 @@ function DocumentsPage() {
       console.error("Failed to rename item:", err);
       setRenameTarget(null);
       setRenameName("");
+    },
+  });
+
+  const retryMutation = useMutation({
+    mutationFn: async (documentId: string) => {
+      await api.documents({ id: documentId }).retry.post();
+    },
+    onSuccess: () => {
+      invalidateFileData();
+    },
+    onError: (err) => {
+      console.error("Failed to retry document processing:", err);
     },
   });
 
@@ -642,6 +630,11 @@ function DocumentsPage() {
                             onDownload={
                               doc.s3Url ? () => handleDownload(doc) : undefined
                             }
+                            onRetry={
+                              doc.status === "failed"
+                                ? () => retryMutation.mutate(doc.id)
+                                : undefined
+                            }
                           />
                         </div>
                       </div>
@@ -763,6 +756,11 @@ function DocumentsPage() {
                   }
                   onOpen={doc.s3Url ? () => handleOpenPreview(doc) : undefined}
                   onDownload={doc.s3Url ? () => handleDownload(doc) : undefined}
+                  onRetry={
+                    doc.status === "failed"
+                      ? () => retryMutation.mutate(doc.id)
+                      : undefined
+                  }
                 />
               </div>
             ))}
@@ -1000,11 +998,13 @@ function ItemContextMenu({
   onDelete,
   onOpen,
   onDownload,
+  onRetry,
 }: {
   onRename: () => void;
   onDelete: () => void;
   onOpen?: () => void;
   onDownload?: () => void;
+  onRetry?: () => void;
 }) {
   return (
     <DropdownMenu>
@@ -1018,7 +1018,7 @@ function ItemContextMenu({
           className="size-3.5"
         />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" sideOffset={4}>
+      <DropdownMenuContent align="end" sideOffset={4} className="min-w-48">
         {onOpen && (
           <DropdownMenuItem
             onClick={(e) => {
@@ -1041,7 +1041,18 @@ function ItemContextMenu({
             Download
           </DropdownMenuItem>
         )}
-        {(onOpen || onDownload) && <DropdownMenuSeparator />}
+        {onRetry && (
+          <DropdownMenuItem
+            onClick={(e) => {
+              e.stopPropagation();
+              onRetry();
+            }}
+          >
+            <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
+            Retry Processing
+          </DropdownMenuItem>
+        )}
+        {(onOpen || onDownload || onRetry) && <DropdownMenuSeparator />}
         <DropdownMenuItem
           onClick={(e) => {
             e.stopPropagation();
