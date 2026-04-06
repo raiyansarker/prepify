@@ -70,13 +70,33 @@ const fetchSessionData = (sessionId: string) =>
         .from(questions)
         .where(eq(questions.examId, session.examId));
 
-      // Build a map: questionId → question for quick lookup
-      const questionMap = new Map(examQuestions.map((q) => [q.id, q]));
+      const answerMap = new Map(sessionAnswers.map((answer) => [answer.questionId, answer]));
+      const missingQuestions = examQuestions.filter(
+        (question) => !answerMap.has(question.id),
+      );
 
-      // Pair each answer with its question
-      const answersWithQuestions = sessionAnswers.map((a) => ({
-        answer: a,
-        question: questionMap.get(a.questionId)!,
+      if (missingQuestions.length > 0) {
+        const createdAnswers = await db
+          .insert(answers)
+          .values(
+            missingQuestions.map((question) => ({
+              sessionId,
+              questionId: question.id,
+              userAnswer: null,
+              attachments: null,
+              answeredAt: new Date(),
+            })),
+          )
+          .returning();
+
+        for (const createdAnswer of createdAnswers) {
+          answerMap.set(createdAnswer.questionId, createdAnswer);
+        }
+      }
+
+      const answersWithQuestions = examQuestions.map((question) => ({
+        question,
+        answer: answerMap.get(question.id)!,
       }));
 
       return { session, exam, answersWithQuestions };
