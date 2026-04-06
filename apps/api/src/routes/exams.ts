@@ -158,6 +158,41 @@ const findSession = (sessionId: string, userId: string) =>
       new DatabaseError({ message: "Failed to find session", cause }),
   });
 
+const findInProgressSessionForExam = (examId: string, userId: string) =>
+  Effect.tryPromise({
+    try: () =>
+      db.query.examSessions.findFirst({
+        where: and(
+          eq(examSessions.examId, examId),
+          eq(examSessions.userId, userId),
+          eq(examSessions.status, "in_progress"),
+        ),
+        orderBy: [desc(examSessions.createdAt)],
+      }),
+    catch: (cause) =>
+      new DatabaseError({
+        message: "Failed to find in-progress session",
+        cause,
+      }),
+  });
+
+const findLatestSessionForExam = (examId: string, userId: string) =>
+  Effect.tryPromise({
+    try: () =>
+      db.query.examSessions.findFirst({
+        where: and(
+          eq(examSessions.examId, examId),
+          eq(examSessions.userId, userId),
+        ),
+        orderBy: [desc(examSessions.createdAt)],
+      }),
+    catch: (cause) =>
+      new DatabaseError({
+        message: "Failed to find latest session for exam",
+        cause,
+      }),
+  });
+
 const findSessionWithDetails = (sessionId: string, userId: string) =>
   Effect.tryPromise({
     try: () =>
@@ -563,6 +598,16 @@ export const examRoutes = new Elysia({ prefix: "/exams" })
             });
           }
 
+          // If there's already an in-progress session for this exam/user,
+          // return it instead of creating a duplicate session.
+          const existingSession = yield* findInProgressSessionForExam(
+            exam.id,
+            auth.userId,
+          );
+          if (existingSession) {
+            return { success: true as const, data: existingSession };
+          }
+
           const now = new Date();
           const endsAt = new Date(
             now.getTime() + exam.durationMinutes * 60 * 1000,
@@ -596,6 +641,44 @@ export const examRoutes = new Elysia({ prefix: "/exams" })
           );
 
           return { success: true as const, data: session! };
+        }),
+      );
+    },
+    {
+      params: t.Object({
+        id: t.String(),
+      }),
+    },
+  )
+
+  // ============================================
+  // GET /exams/:id/sessions/latest — Get latest session for exam
+  // ============================================
+  .get(
+    "/:id/sessions/latest",
+    async (ctx) => {
+      const auth = (ctx as unknown as { auth: Auth }).auth;
+
+      return effectHandler(
+        ctx,
+        Effect.gen(function* () {
+          const exam = yield* findExam(ctx.params.id, auth.userId);
+          if (!exam) {
+            return yield* new NotFoundError({
+              entity: "Exam",
+              id: ctx.params.id,
+            });
+          }
+
+          const session = yield* findLatestSessionForExam(exam.id, auth.userId);
+          if (!session) {
+            return yield* new NotFoundError({
+              entity: "ExamSession",
+              id: ctx.params.id,
+            });
+          }
+
+          return { success: true as const, data: session };
         }),
       );
     },
@@ -724,10 +807,10 @@ export const examRoutes = new Elysia({ prefix: "/exams" })
 
           // Already submitted
           if (session.status !== "in_progress") {
-            return yield* new ExamError({
-              examId: session.examId,
-              message: `Session already ${session.status}`,
-            });
+            return {
+              success: true as const,
+              data: { sessionId: session.id, status: session.status },
+            };
           }
 
           // Determine if timed out vs user submission

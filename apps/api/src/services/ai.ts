@@ -8,6 +8,9 @@ import { env } from "#/lib/env";
 
 export type GroqProvider = ReturnType<typeof createGroq>;
 
+/** Kimi K2 model ID on Groq — used for exam question generation */
+export const KIMI_K2_MODEL = "moonshotai/kimi-k2-instruct-0905" as const;
+
 export class AiService extends Context.Tag("AiService")<
   AiService,
   {
