@@ -29,6 +29,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.545.0",
+    "motion": "^12.34.5",
     "pushduck": "^0.3.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
