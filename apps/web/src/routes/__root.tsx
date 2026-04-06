@@ -23,6 +23,7 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthTokenProvider>
+        <title>Prepify</title>
         <Outlet />
         <TanStackDevtools
           config={{
