@@ -21,7 +21,11 @@ import { Route as AuthenticatedChatRouteImport } from './routes/_authenticated/c
 import { Route as AuthenticatedExamsIndexRouteImport } from './routes/_authenticated/exams/index'
 import { Route as AuthenticatedExamsNewRouteImport } from './routes/_authenticated/exams/new'
 import { Route as AuthenticatedExamsExamIdIndexRouteImport } from './routes/_authenticated/exams/$examId/index'
+import { Route as AuthenticatedExamsExamIdStartRouteImport } from './routes/_authenticated/exams/$examId/start'
 import { Route as AuthenticatedExamsExamIdResultsRouteImport } from './routes/_authenticated/exams/$examId/results'
+import { Route as AuthenticatedExamsExamIdResultsIndexRouteImport } from './routes/_authenticated/exams/$examId/results/index'
+import { Route as AuthenticatedExamsExamIdResultsPendingRouteImport } from './routes/_authenticated/exams/$examId/results/pending'
+import { Route as AuthenticatedExamsExamIdResultsErrorRouteImport } from './routes/_authenticated/exams/$examId/results/error'
 
 const SignUpRoute = SignUpRouteImport.update({
   id: '/sign-up',
@@ -83,11 +87,35 @@ const AuthenticatedExamsExamIdIndexRoute =
     path: '/$examId/',
     getParentRoute: () => AuthenticatedExamsRoute,
   } as any)
+const AuthenticatedExamsExamIdStartRoute =
+  AuthenticatedExamsExamIdStartRouteImport.update({
+    id: '/$examId/start',
+    path: '/$examId/start',
+    getParentRoute: () => AuthenticatedExamsRoute,
+  } as any)
 const AuthenticatedExamsExamIdResultsRoute =
   AuthenticatedExamsExamIdResultsRouteImport.update({
     id: '/$examId/results',
     path: '/$examId/results',
     getParentRoute: () => AuthenticatedExamsRoute,
+  } as any)
+const AuthenticatedExamsExamIdResultsIndexRoute =
+  AuthenticatedExamsExamIdResultsIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AuthenticatedExamsExamIdResultsRoute,
+  } as any)
+const AuthenticatedExamsExamIdResultsPendingRoute =
+  AuthenticatedExamsExamIdResultsPendingRouteImport.update({
+    id: '/pending',
+    path: '/pending',
+    getParentRoute: () => AuthenticatedExamsExamIdResultsRoute,
+  } as any)
+const AuthenticatedExamsExamIdResultsErrorRoute =
+  AuthenticatedExamsExamIdResultsErrorRouteImport.update({
+    id: '/error',
+    path: '/error',
+    getParentRoute: () => AuthenticatedExamsExamIdResultsRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -101,8 +129,12 @@ export interface FileRoutesByFullPath {
   '/flashcards': typeof AuthenticatedFlashcardsRoute
   '/exams/new': typeof AuthenticatedExamsNewRoute
   '/exams/': typeof AuthenticatedExamsIndexRoute
-  '/exams/$examId/results': typeof AuthenticatedExamsExamIdResultsRoute
+  '/exams/$examId/results': typeof AuthenticatedExamsExamIdResultsRouteWithChildren
+  '/exams/$examId/start': typeof AuthenticatedExamsExamIdStartRoute
   '/exams/$examId/': typeof AuthenticatedExamsExamIdIndexRoute
+  '/exams/$examId/results/error': typeof AuthenticatedExamsExamIdResultsErrorRoute
+  '/exams/$examId/results/pending': typeof AuthenticatedExamsExamIdResultsPendingRoute
+  '/exams/$examId/results/': typeof AuthenticatedExamsExamIdResultsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -114,8 +146,11 @@ export interface FileRoutesByTo {
   '/flashcards': typeof AuthenticatedFlashcardsRoute
   '/exams/new': typeof AuthenticatedExamsNewRoute
   '/exams': typeof AuthenticatedExamsIndexRoute
-  '/exams/$examId/results': typeof AuthenticatedExamsExamIdResultsRoute
+  '/exams/$examId/start': typeof AuthenticatedExamsExamIdStartRoute
   '/exams/$examId': typeof AuthenticatedExamsExamIdIndexRoute
+  '/exams/$examId/results/error': typeof AuthenticatedExamsExamIdResultsErrorRoute
+  '/exams/$examId/results/pending': typeof AuthenticatedExamsExamIdResultsPendingRoute
+  '/exams/$examId/results': typeof AuthenticatedExamsExamIdResultsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -130,8 +165,12 @@ export interface FileRoutesById {
   '/_authenticated/flashcards': typeof AuthenticatedFlashcardsRoute
   '/_authenticated/exams/new': typeof AuthenticatedExamsNewRoute
   '/_authenticated/exams/': typeof AuthenticatedExamsIndexRoute
-  '/_authenticated/exams/$examId/results': typeof AuthenticatedExamsExamIdResultsRoute
+  '/_authenticated/exams/$examId/results': typeof AuthenticatedExamsExamIdResultsRouteWithChildren
+  '/_authenticated/exams/$examId/start': typeof AuthenticatedExamsExamIdStartRoute
   '/_authenticated/exams/$examId/': typeof AuthenticatedExamsExamIdIndexRoute
+  '/_authenticated/exams/$examId/results/error': typeof AuthenticatedExamsExamIdResultsErrorRoute
+  '/_authenticated/exams/$examId/results/pending': typeof AuthenticatedExamsExamIdResultsPendingRoute
+  '/_authenticated/exams/$examId/results/': typeof AuthenticatedExamsExamIdResultsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -147,7 +186,11 @@ export interface FileRouteTypes {
     | '/exams/new'
     | '/exams/'
     | '/exams/$examId/results'
+    | '/exams/$examId/start'
     | '/exams/$examId/'
+    | '/exams/$examId/results/error'
+    | '/exams/$examId/results/pending'
+    | '/exams/$examId/results/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -159,8 +202,11 @@ export interface FileRouteTypes {
     | '/flashcards'
     | '/exams/new'
     | '/exams'
-    | '/exams/$examId/results'
+    | '/exams/$examId/start'
     | '/exams/$examId'
+    | '/exams/$examId/results/error'
+    | '/exams/$examId/results/pending'
+    | '/exams/$examId/results'
   id:
     | '__root__'
     | '/'
@@ -175,7 +221,11 @@ export interface FileRouteTypes {
     | '/_authenticated/exams/new'
     | '/_authenticated/exams/'
     | '/_authenticated/exams/$examId/results'
+    | '/_authenticated/exams/$examId/start'
     | '/_authenticated/exams/$examId/'
+    | '/_authenticated/exams/$examId/results/error'
+    | '/_authenticated/exams/$examId/results/pending'
+    | '/_authenticated/exams/$examId/results/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -271,6 +321,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedExamsExamIdIndexRouteImport
       parentRoute: typeof AuthenticatedExamsRoute
     }
+    '/_authenticated/exams/$examId/start': {
+      id: '/_authenticated/exams/$examId/start'
+      path: '/$examId/start'
+      fullPath: '/exams/$examId/start'
+      preLoaderRoute: typeof AuthenticatedExamsExamIdStartRouteImport
+      parentRoute: typeof AuthenticatedExamsRoute
+    }
     '/_authenticated/exams/$examId/results': {
       id: '/_authenticated/exams/$examId/results'
       path: '/$examId/results'
@@ -278,20 +335,65 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedExamsExamIdResultsRouteImport
       parentRoute: typeof AuthenticatedExamsRoute
     }
+    '/_authenticated/exams/$examId/results/': {
+      id: '/_authenticated/exams/$examId/results/'
+      path: '/'
+      fullPath: '/exams/$examId/results/'
+      preLoaderRoute: typeof AuthenticatedExamsExamIdResultsIndexRouteImport
+      parentRoute: typeof AuthenticatedExamsExamIdResultsRoute
+    }
+    '/_authenticated/exams/$examId/results/pending': {
+      id: '/_authenticated/exams/$examId/results/pending'
+      path: '/pending'
+      fullPath: '/exams/$examId/results/pending'
+      preLoaderRoute: typeof AuthenticatedExamsExamIdResultsPendingRouteImport
+      parentRoute: typeof AuthenticatedExamsExamIdResultsRoute
+    }
+    '/_authenticated/exams/$examId/results/error': {
+      id: '/_authenticated/exams/$examId/results/error'
+      path: '/error'
+      fullPath: '/exams/$examId/results/error'
+      preLoaderRoute: typeof AuthenticatedExamsExamIdResultsErrorRouteImport
+      parentRoute: typeof AuthenticatedExamsExamIdResultsRoute
+    }
   }
 }
+
+interface AuthenticatedExamsExamIdResultsRouteChildren {
+  AuthenticatedExamsExamIdResultsErrorRoute: typeof AuthenticatedExamsExamIdResultsErrorRoute
+  AuthenticatedExamsExamIdResultsPendingRoute: typeof AuthenticatedExamsExamIdResultsPendingRoute
+  AuthenticatedExamsExamIdResultsIndexRoute: typeof AuthenticatedExamsExamIdResultsIndexRoute
+}
+
+const AuthenticatedExamsExamIdResultsRouteChildren: AuthenticatedExamsExamIdResultsRouteChildren =
+  {
+    AuthenticatedExamsExamIdResultsErrorRoute:
+      AuthenticatedExamsExamIdResultsErrorRoute,
+    AuthenticatedExamsExamIdResultsPendingRoute:
+      AuthenticatedExamsExamIdResultsPendingRoute,
+    AuthenticatedExamsExamIdResultsIndexRoute:
+      AuthenticatedExamsExamIdResultsIndexRoute,
+  }
+
+const AuthenticatedExamsExamIdResultsRouteWithChildren =
+  AuthenticatedExamsExamIdResultsRoute._addFileChildren(
+    AuthenticatedExamsExamIdResultsRouteChildren,
+  )
 
 interface AuthenticatedExamsRouteChildren {
   AuthenticatedExamsNewRoute: typeof AuthenticatedExamsNewRoute
   AuthenticatedExamsIndexRoute: typeof AuthenticatedExamsIndexRoute
-  AuthenticatedExamsExamIdResultsRoute: typeof AuthenticatedExamsExamIdResultsRoute
+  AuthenticatedExamsExamIdResultsRoute: typeof AuthenticatedExamsExamIdResultsRouteWithChildren
+  AuthenticatedExamsExamIdStartRoute: typeof AuthenticatedExamsExamIdStartRoute
   AuthenticatedExamsExamIdIndexRoute: typeof AuthenticatedExamsExamIdIndexRoute
 }
 
 const AuthenticatedExamsRouteChildren: AuthenticatedExamsRouteChildren = {
   AuthenticatedExamsNewRoute: AuthenticatedExamsNewRoute,
   AuthenticatedExamsIndexRoute: AuthenticatedExamsIndexRoute,
-  AuthenticatedExamsExamIdResultsRoute: AuthenticatedExamsExamIdResultsRoute,
+  AuthenticatedExamsExamIdResultsRoute:
+    AuthenticatedExamsExamIdResultsRouteWithChildren,
+  AuthenticatedExamsExamIdStartRoute: AuthenticatedExamsExamIdStartRoute,
   AuthenticatedExamsExamIdIndexRoute: AuthenticatedExamsExamIdIndexRoute,
 }
 

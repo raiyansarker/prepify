@@ -275,7 +275,11 @@ function ExamsPage() {
 
   const handleViewResults = useCallback(
     (examId: string) => {
-      navigate({ to: "/exams/$examId/results", params: { examId } });
+      navigate({
+        to: "/exams/$examId/results",
+        params: { examId },
+        search: { sessionId: undefined },
+      });
     },
     [navigate],
   );
@@ -576,7 +580,9 @@ function ExamCard({
 
         <div className="flex flex-wrap items-center gap-2">
           <Badge className={cn("gap-1 border", status.className)}>
-            <span className={cn("size-1.5 rounded-full", status.dotClassName)} />
+            <span
+              className={cn("size-1.5 rounded-full", status.dotClassName)}
+            />
             {status.label}
           </Badge>
           <Badge variant="outline" className="gap-1">
