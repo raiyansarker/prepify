@@ -7,8 +7,8 @@ export const UPLOAD_API_URL = `${import.meta.env.VITE_API_URL || "http://localho
 
 export const uploadClient = createUploadClient<AppUploadRouter>({
   endpoint: UPLOAD_API_URL,
-  fetcher: (input, init) => {
-    const token = window.__clerk_token;
+  fetcher: async (input, init) => {
+    const token = await window.__clerk_getToken?.();
     const headers = new Headers(init?.headers);
     if (token) {
       headers.set("Authorization", `Bearer ${token}`);

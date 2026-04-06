@@ -13,9 +13,9 @@ export const api = treaty<App>(API_URL, {
   fetch: {
     credentials: "include",
   },
-  headers: () => {
-    // Clerk token will be injected via useAuth hook
-    const token = window.__clerk_token;
+  headers: async () => {
+    // Fetch a fresh token on every request — Clerk caches internally
+    const token = await window.__clerk_getToken?.();
     if (token) {
       return {
         Authorization: `Bearer ${token}`,
@@ -25,9 +25,9 @@ export const api = treaty<App>(API_URL, {
   },
 });
 
-// Augment window to store the Clerk token
+// Augment window to store the Clerk getToken function
 declare global {
   interface Window {
-    __clerk_token?: string;
+    __clerk_getToken?: () => Promise<string | null>;
   }
 }
