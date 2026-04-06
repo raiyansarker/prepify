@@ -45,6 +45,8 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user } = useUser();
   const routerState = useRouterState();
   const currentPath = routerState.location.pathname;
+  const isChatRoute =
+    currentPath === "/chat" || currentPath.startsWith("/chat/");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
@@ -148,8 +150,15 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-7xl p-6">{children}</div>
+        <main
+          className={cn(
+            "flex-1",
+            isChatRoute ? "overflow-hidden" : "overflow-y-auto",
+          )}
+        >
+          <div className={cn(isChatRoute ? "h-full w-full" : "mx-auto max-w-7xl p-6")}>
+            {children}
+          </div>
         </main>
       </div>
     </div>
