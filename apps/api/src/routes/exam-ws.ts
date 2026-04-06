@@ -1,8 +1,11 @@
 import { Elysia, t } from "elysia";
 import { verifyToken } from "@clerk/backend";
+import { and, eq } from "drizzle-orm";
 import { env } from "#/lib/env";
 import { wsLogger as log } from "#/lib/logger";
 import { getSubscriber, channels } from "#/lib/pubsub";
+import { db } from "#/db";
+import { exams, examSessions } from "#/db/schema";
 import type { WsClientMessage } from "@repo/shared";
 
 // ============================================
@@ -153,6 +156,26 @@ async function authenticateToken(
   }
 }
 
+async function canSubscribeExam(
+  examId: string,
+  userId: string,
+): Promise<boolean> {
+  const exam = await db.query.exams.findFirst({
+    where: and(eq(exams.id, examId), eq(exams.userId, userId)),
+  });
+  return !!exam;
+}
+
+async function canSubscribeSession(
+  sessionId: string,
+  userId: string,
+): Promise<boolean> {
+  const session = await db.query.examSessions.findFirst({
+    where: and(eq(examSessions.id, sessionId), eq(examSessions.userId, userId)),
+  });
+  return !!session;
+}
+
 // ============================================
 // WebSocket counter for unique IDs
 // ============================================
@@ -246,6 +269,17 @@ export const examWsRoutes = new Elysia({ prefix: "/ws" }).ws("/exams", {
 
       case "subscribe_exam":
         if (msg.examId) {
+          const allowed = await canSubscribeExam(msg.examId, userId);
+          if (!allowed) {
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                message: "Not authorized for this exam channel",
+              }),
+            );
+            break;
+          }
+
           await subscribeToChannel(wsId, channels.exam(msg.examId));
           ws.send(
             JSON.stringify({
@@ -258,6 +292,17 @@ export const examWsRoutes = new Elysia({ prefix: "/ws" }).ws("/exams", {
 
       case "subscribe_session":
         if (msg.sessionId) {
+          const allowed = await canSubscribeSession(msg.sessionId, userId);
+          if (!allowed) {
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                message: "Not authorized for this session channel",
+              }),
+            );
+            break;
+          }
+
           await subscribeToChannel(wsId, channels.session(msg.sessionId));
           ws.send(
             JSON.stringify({
