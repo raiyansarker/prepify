@@ -1,21 +1,13 @@
 import { sql, eq, and, inArray } from "drizzle-orm";
-import { embed } from "ai";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { InferenceClient } from "@huggingface/inference";
 import { db } from "#/db";
 import { documentChunks, documents } from "#/db/schema";
 import { MAX_CONTEXT_CHUNKS } from "@repo/shared";
 import { env } from "#/lib/env";
+import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from "#/lib/embedding-config";
 
 // ============================================
 // Embedding provider for queries
-// ============================================
-
-const google = createGoogleGenerativeAI({
-  apiKey: env().ai.googleApiKey,
-});
-
-// ============================================
-// Types
 // ============================================
 
 export interface SimilarChunk {
@@ -54,14 +46,20 @@ export async function findSimilarChunks(
     minSimilarity = 0.3,
   } = options;
 
-  // 1. Embed the query
-  const { embedding: queryEmbedding } = await embed({
-    model: google.embeddingModel("gemini-embedding-001"),
-    value: query,
-    providerOptions: {
-      google: { outputDimensionality: 768 },
-    },
+  // 1. Embed the query via HuggingFace
+  const hf = new InferenceClient(env().ai.huggingFaceApiKey);
+  const result = await hf.featureExtraction({
+    model: EMBEDDING_MODEL,
+    inputs: query,
+    provider: "hf-inference",
   });
+  // featureExtraction for a single string returns a number[] (1D vector)
+  const queryEmbedding = result as number[];
+  if (queryEmbedding.length !== EMBEDDING_DIMENSIONS) {
+    throw new Error(
+      `Query embedding dimension mismatch: expected ${EMBEDDING_DIMENSIONS}, received ${queryEmbedding.length}`,
+    );
+  }
 
   // 2. Build the vector similarity query
   // cosine distance: 1 - (a <=> b) gives similarity (0 to 1)

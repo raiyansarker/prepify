@@ -6,10 +6,12 @@ import {
   ValidationError,
   DatabaseError,
   ExternalServiceError,
+  RateLimitError,
   type AppError,
 } from "#/lib/errors";
 import { DatabaseServiceLive } from "./database";
 import { AiServiceLive } from "./ai";
+import { EmbeddingServiceLive } from "./embedding";
 import { LogLayer } from "#/lib/logger";
 import { apiLogger } from "#/lib/logger";
 
@@ -20,6 +22,7 @@ import { apiLogger } from "#/lib/logger";
 export const AppLayer = Layer.mergeAll(
   DatabaseServiceLive,
   AiServiceLive,
+  EmbeddingServiceLive,
   LogLayer,
 );
 
@@ -155,6 +158,15 @@ export const mapErrorToHttp = (error: AppError): HttpErrorResponse => {
           success: false,
           error: "Storage operation failed",
           code: "STORAGE_ERROR",
+        },
+      };
+    case "RateLimitError":
+      return {
+        status: 429,
+        body: {
+          success: false,
+          error: `Rate limit exceeded: ${error.service}`,
+          code: "RATE_LIMIT_ERROR",
         },
       };
     default:

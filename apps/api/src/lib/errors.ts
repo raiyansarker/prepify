@@ -68,6 +68,13 @@ export class StorageError extends Data.TaggedError("StorageError")<{
   readonly cause?: unknown;
 }> {}
 
+export class RateLimitError extends Data.TaggedError("RateLimitError")<{
+  readonly service: string;
+  readonly message: string;
+  readonly retryAfterMs?: number;
+  readonly cause?: unknown;
+}> {}
+
 // ============================================
 // Union type of all application errors
 // ============================================
@@ -83,4 +90,5 @@ export type AppError =
   | ExamError
   | ExamSessionExpiredError
   | AiGenerationError
-  | StorageError;
+  | StorageError
+  | RateLimitError;

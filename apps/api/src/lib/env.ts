@@ -89,12 +89,14 @@ export class AiConfig extends Context.Tag("AiConfig")<
   {
     readonly groqApiKey: string;
     readonly googleApiKey: string;
+    readonly huggingFaceApiKey: string;
   }
 >() {}
 
 const aiConfig = Config.all({
   groqApiKey: Config.string("GROQ_API_KEY"),
   googleApiKey: Config.string("GOOGLE_GENERATIVE_AI_API_KEY"),
+  huggingFaceApiKey: Config.string("HUGGINGFACE_API_KEY"),
 });
 
 export const AiConfigLive = Layer.effect(
@@ -182,6 +184,7 @@ export interface ResolvedEnv {
   ai: {
     groqApiKey: string;
     googleApiKey: string;
+    huggingFaceApiKey: string;
   };
   redis: { url: string };
   server: {
