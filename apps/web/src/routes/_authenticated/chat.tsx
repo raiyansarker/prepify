@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useUser } from "@clerk/clerk-react";
 import {
   useState,
   useEffect,
@@ -15,9 +16,11 @@ import {
 } from "@tanstack/react-query";
 import { useChat } from "@ai-sdk/react";
 import { TextStreamChatTransport, type UIMessage } from "ai";
+import { AnimatePresence, motion } from "motion/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Add01Icon,
+  Menu01Icon,
   Delete02Icon,
   PencilEdit02Icon,
   SentIcon,
@@ -30,7 +33,6 @@ import {
   UserIcon,
   MoreHorizontalIcon,
   Search01Icon,
-  SidebarLeftIcon,
   StopIcon,
 } from "@hugeicons/core-free-icons";
 import { Button } from "#/components/ui/button";
@@ -52,6 +54,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "#/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "#/components/ui/dialog";
 import { Badge } from "#/components/ui/badge";
 import { cn } from "#/lib/utils";
 import { api, API_URL } from "#/lib/api";
@@ -146,6 +155,7 @@ function normalizeMessage(m: Message): Message {
 function ChatPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { user } = useUser();
   const { conversationId: activeConversationId } = Route.useSearch();
 
   // Helper to update the URL
@@ -165,7 +175,8 @@ function ChatPage() {
 
   // Document scope state
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
-  const [showDocumentPicker, setShowDocumentPicker] = useState(false);
+  const [isContextDialogOpen, setIsContextDialogOpen] = useState(false);
+  const [contextSearchQuery, setContextSearchQuery] = useState("");
 
   // UI state
   const [editingConversationId, setEditingConversationId] = useState<
@@ -175,7 +186,7 @@ function ChatPage() {
   const [deleteConversationId, setDeleteConversationId] = useState<
     string | null
   >(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [conversationPanelOpen, setConversationPanelOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [showScrollButton, setShowScrollButton] = useState(false);
 
@@ -183,6 +194,9 @@ function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const contextSearchInputRef = useRef<HTMLInputElement>(null);
+  const conversationSearchInputRef = useRef<HTMLInputElement>(null);
+  const seenMessageIdsRef = useRef<Set<string>>(new Set());
 
   // Keep dynamic values in refs so the transport closures always see the latest
   const activeConversationIdRef = useRef(activeConversationId);
@@ -303,6 +317,11 @@ function ChatPage() {
     return conversations.filter((c) => c.title.toLowerCase().includes(q));
   }, [conversations, searchQuery]);
 
+  const activeConversation = useMemo(
+    () => conversations.find((c) => c.id === activeConversationId) ?? null,
+    [conversations, activeConversationId],
+  );
+
   const { data: documents = [] } = useQuery({
     queryKey: ["chat-documents"],
     queryFn: async () => {
@@ -315,6 +334,39 @@ function ChatPage() {
       return [];
     },
   });
+
+  const filteredDocuments = useMemo(() => {
+    const query = contextSearchQuery.trim().toLowerCase();
+    if (!query) return documents;
+    return documents.filter((doc) => doc.name.toLowerCase().includes(query));
+  }, [documents, contextSearchQuery]);
+
+  const selectedDocuments = useMemo(
+    () =>
+      selectedDocumentIds
+        .map((id) => documents.find((doc) => doc.id === id))
+        .filter((doc): doc is Document => !!doc),
+    [selectedDocumentIds, documents],
+  );
+
+  const visibleSelectedDocuments = selectedDocuments.slice(0, 3);
+  const hiddenSelectedDocumentCount = Math.max(
+    0,
+    selectedDocuments.length - visibleSelectedDocuments.length,
+  );
+
+  const isContextSearchActive = contextSearchQuery.trim().length > 0;
+
+  const newlySeenMessageIds = useMemo(() => {
+    const seen = seenMessageIdsRef.current;
+    const next = new Set<string>();
+    for (const message of chat.messages) {
+      if (!seen.has(message.id)) {
+        next.add(message.id);
+      }
+    }
+    return next;
+  }, [chat.messages]);
 
   // Scroll to bottom on new messages / streaming
   const messageCount = chat.messages.length;
@@ -340,6 +392,33 @@ function ChatPage() {
     container.addEventListener("scroll", handleScroll);
     return () => container.removeEventListener("scroll", handleScroll);
   }, []);
+
+  useEffect(() => {
+    if (!isContextDialogOpen) return;
+    const id = window.setTimeout(() => {
+      contextSearchInputRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [isContextDialogOpen]);
+
+  useEffect(() => {
+    if (!conversationPanelOpen) return;
+    const id = window.setTimeout(() => {
+      conversationSearchInputRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [conversationPanelOpen]);
+
+  useEffect(() => {
+    seenMessageIdsRef.current = new Set();
+  }, [activeConversationId]);
+
+  useEffect(() => {
+    const seen = seenMessageIdsRef.current;
+    for (const message of chat.messages) {
+      seen.add(message.id);
+    }
+  }, [chat.messages]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -516,211 +595,219 @@ function ChatPage() {
   // Render
   // ============================================
 
+  const renderConversationSidebar = (isMobile: boolean) => (
+    <>
+      <div className="flex h-12 items-center justify-between px-3">
+        <span className="text-sm font-semibold tracking-tight">Chats</span>
+        {isMobile ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => {
+              setConversationPanelOpen(false);
+              if (!editingConversationId) setSearchQuery("");
+            }}
+            aria-label="Close conversations"
+          >
+            <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
+          </Button>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => createConversationMutation.mutate()}
+            title="New chat"
+          >
+            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+          </Button>
+        )}
+      </div>
+
+      <div className="space-y-2 px-3 py-3">
+        {isMobile && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full justify-start"
+            onClick={() => {
+              createConversationMutation.mutate();
+              setConversationPanelOpen(false);
+              setSearchQuery("");
+            }}
+          >
+            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+            New chat
+          </Button>
+        )}
+
+        <div className="relative">
+          <HugeiconsIcon
+            icon={Search01Icon}
+            strokeWidth={2}
+            className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            ref={isMobile ? conversationSearchInputRef : undefined}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search chats..."
+            className="h-8 rounded-lg pl-8 text-xs"
+          />
+        </div>
+      </div>
+
+      <div className="chat-scroll min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
+        {isLoadingConversations ? (
+          <div className="flex items-center justify-center py-8">
+            <HugeiconsIcon
+              icon={Loading03Icon}
+              strokeWidth={2}
+              className="size-4 animate-spin text-muted-foreground"
+            />
+          </div>
+        ) : filteredConversations.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border p-5 text-center">
+            <p className="text-xs text-muted-foreground">
+              {searchQuery ? "No matching chats" : "No conversations yet"}
+            </p>
+          </div>
+        ) : (
+          groupedConversations.map((group) => (
+            <div key={group.label}>
+              <p className="mb-1 px-1 text-[0.65rem] font-medium uppercase tracking-[0.12em] text-muted-foreground/75">
+                {group.label}
+              </p>
+              <div className="space-y-1">
+                {group.items.map((convo) => (
+                  <ConversationItem
+                    key={convo.id}
+                    convo={convo}
+                    isActive={activeConversationId === convo.id}
+                    isEditing={editingConversationId === convo.id}
+                    editTitle={editTitle}
+                    setEditTitle={setEditTitle}
+                    onSelect={() => {
+                      setActiveConversationId(convo.id);
+                      if (isMobile) {
+                        setConversationPanelOpen(false);
+                        setSearchQuery("");
+                      }
+                    }}
+                    onStartEdit={() => {
+                      setEditingConversationId(convo.id);
+                      setEditTitle(convo.title);
+                    }}
+                    onSaveEdit={() =>
+                      renameConversationMutation.mutate({
+                        id: convo.id,
+                        title: editTitle,
+                      })
+                    }
+                    onCancelEdit={() => setEditingConversationId(null)}
+                    onDelete={() => setDeleteConversationId(convo.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </>
+  );
+
   return (
     <>
       <title>Chat - Prepify</title>
-      <div className="-m-6 flex h-[calc(100vh-3.5rem)] lg:h-screen">
-        {/* ==================== SIDEBAR ==================== */}
-        <div
-          className={cn(
-            "flex flex-col border-r border-border bg-muted/30 transition-all duration-200",
-            sidebarOpen ? "w-72" : "w-0 overflow-hidden border-r-0",
-          )}
-        >
-          {/* Sidebar header */}
-          <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-3">
-            <span className="text-sm font-semibold">Chats</span>
+      <div className="relative flex h-full min-h-0 bg-[radial-gradient(circle_at_top_right,hsl(var(--primary)/0.08),transparent_46%),hsl(var(--background))]">
+        <aside className="hidden w-80 shrink-0 border-r border-border/70 bg-background/85 backdrop-blur md:flex md:flex-col">
+          {renderConversationSidebar(false)}
+        </aside>
+
+        <div className="relative flex min-w-0 flex-1 flex-col">
+          <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background/80 px-2 sm:px-4">
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={() => createConversationMutation.mutate()}
-              title="New chat"
+              onClick={() => setConversationPanelOpen(true)}
+              className="rounded-lg md:hidden"
+              title="Open conversations"
             >
-              <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+              <HugeiconsIcon icon={Menu01Icon} strokeWidth={2} />
             </Button>
-          </div>
 
-          {/* Search */}
-          <div className="px-3 pt-3 pb-1">
-            <div className="relative">
-              <HugeiconsIcon
-                icon={Search01Icon}
-                strokeWidth={2}
-                className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-              />
-              <Input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search chats..."
-                className="h-7 pl-8 text-xs"
-              />
-            </div>
-          </div>
+            <p className="min-w-0 flex-1 truncate text-sm font-medium tracking-tight">
+              {activeConversation?.title ?? "New chat"}
+            </p>
 
-          {/* Conversation list */}
-          <div className="flex-1 overflow-y-auto px-2 py-2">
-            {isLoadingConversations ? (
-              <div className="flex items-center justify-center py-12">
-                <HugeiconsIcon
-                  icon={Loading03Icon}
-                  strokeWidth={2}
-                  className="size-4 animate-spin text-muted-foreground"
-                />
-              </div>
-            ) : filteredConversations.length === 0 ? (
-              <div className="px-3 py-12 text-center">
-                <p className="text-xs text-muted-foreground">
-                  {searchQuery ? "No matching chats" : "No conversations yet"}
-                </p>
-              </div>
+            {selectedDocumentIds.length > 0 ? (
+              <Badge variant="secondary" className="h-5 text-[0.65rem]">
+                {selectedDocumentIds.length} context
+              </Badge>
             ) : (
-              <div className="space-y-4">
-                {groupedConversations.map((group) => (
-                  <div key={group.label}>
-                    <p className="mb-1 px-2 text-[0.65rem] font-medium uppercase tracking-wider text-muted-foreground/70">
-                      {group.label}
-                    </p>
-                    <div className="space-y-px">
-                      {group.items.map((convo) => (
-                        <ConversationItem
-                          key={convo.id}
-                          convo={convo}
-                          isActive={activeConversationId === convo.id}
-                          isEditing={editingConversationId === convo.id}
-                          editTitle={editTitle}
-                          setEditTitle={setEditTitle}
-                          onSelect={() => setActiveConversationId(convo.id)}
-                          onStartEdit={() => {
-                            setEditingConversationId(convo.id);
-                            setEditTitle(convo.title);
-                          }}
-                          onSaveEdit={() =>
-                            renameConversationMutation.mutate({
-                              id: convo.id,
-                              title: editTitle,
-                            })
-                          }
-                          onCancelEdit={() => setEditingConversationId(null)}
-                          onDelete={() => setDeleteConversationId(convo.id)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <p className="hidden text-[0.68rem] text-muted-foreground sm:block">
+                No context files
+              </p>
             )}
           </div>
-        </div>
 
-        {/* ==================== MAIN CHAT ==================== */}
-        <div className="flex flex-1 flex-col">
-          {/* Header */}
-          <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-4">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+          <AnimatePresence>
+            {conversationPanelOpen && (
+              <motion.div
+                className="absolute inset-0 z-30 md:hidden"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+              >
+                <button
+                  type="button"
+                  className="absolute inset-0 bg-black/25"
+                  onClick={() => {
+                    setConversationPanelOpen(false);
+                    if (!editingConversationId) setSearchQuery("");
+                  }}
+                  aria-label="Close conversations panel"
+                />
+                <motion.aside
+                  className="absolute left-0 top-0 flex h-full w-[min(22rem,92vw)] flex-col border-r border-border/70 bg-background shadow-xl"
+                  initial={{ x: "-100%" }}
+                  animate={{ x: 0 }}
+                  exit={{ x: "-100%" }}
+                  transition={{
+                    type: "spring",
+                    stiffness: 320,
+                    damping: 34,
+                    mass: 0.9,
+                  }}
+                >
+                  {renderConversationSidebar(true)}
+                </motion.aside>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div
+              ref={messagesContainerRef}
+              className="chat-scroll relative min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 lg:px-8"
             >
-              <HugeiconsIcon icon={SidebarLeftIcon} strokeWidth={2} />
-            </Button>
-
-            <div className="h-5 w-px bg-border" />
-
-            <div className="flex-1 min-w-0">
-              <h1 className="truncate text-sm font-medium">
-                {activeConversationId
-                  ? conversations.find((c) => c.id === activeConversationId)
-                      ?.title || "Chat"
-                  : "New chat"}
-              </h1>
-            </div>
-
-            {/* Document scope */}
-            <Button
-              variant={selectedDocumentIds.length > 0 ? "secondary" : "outline"}
-              size="sm"
-              onClick={() => setShowDocumentPicker(!showDocumentPicker)}
-            >
-              <HugeiconsIcon
-                icon={FileAttachmentIcon}
-                strokeWidth={2}
-                className="size-3.5"
-              />
-              {selectedDocumentIds.length > 0
-                ? `${selectedDocumentIds.length} doc${selectedDocumentIds.length !== 1 ? "s" : ""}`
-                : "Add context"}
-            </Button>
-          </div>
-
-          {/* Document picker */}
-          {showDocumentPicker && (
-            <div className="border-b border-border bg-muted/20 px-4 py-3">
-              <div className="mx-auto max-w-2xl">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="text-xs text-muted-foreground">
-                    Scope AI responses to specific documents
-                  </p>
-                  {selectedDocumentIds.length > 0 && (
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => setSelectedDocumentIds([])}
-                    >
-                      Clear
-                    </Button>
-                  )}
-                </div>
-                {documents.length === 0 ? (
-                  <p className="text-xs text-muted-foreground/60">
-                    No processed documents available.
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {documents.map((doc) => (
-                      <Badge
-                        key={doc.id}
-                        variant={
-                          selectedDocumentIds.includes(doc.id)
-                            ? "default"
-                            : "outline"
-                        }
-                        className="cursor-pointer select-none text-xs"
-                        onClick={() => toggleDocumentScope(doc.id)}
-                      >
-                        {doc.name}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* ==================== MESSAGES ==================== */}
-          <div
-            ref={messagesContainerRef}
-            className="relative flex-1 overflow-y-auto"
-          >
             {!activeConversationId && chat.messages.length === 0 ? (
-              /* Empty state */
-              <div className="flex h-full flex-col items-center justify-center px-4">
-                <div className="flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5">
+              <div className="mx-auto flex h-full max-w-xl flex-col items-center justify-center text-center">
+                <div className="flex size-12 items-center justify-center rounded-full bg-primary/12">
                   <HugeiconsIcon
                     icon={SparklesIcon}
-                    strokeWidth={1.5}
-                    className="size-8 text-primary"
+                    strokeWidth={1.8}
+                    className="size-5 text-primary"
                   />
                 </div>
-                <h2 className="mt-5 text-xl font-semibold tracking-tight">
-                  How can I help you?
+                <h2 className="mt-4 text-xl font-semibold tracking-tight">
+                  Ask anything
                 </h2>
-                <p className="mt-2 max-w-md text-center text-sm leading-relaxed text-muted-foreground">
-                  Ask questions about your study materials, get explanations, or
-                  explore any topic. Your uploaded documents provide context for
-                  more accurate answers.
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Ask about your study materials or general topics. Add context
+                  files for more precise answers.
                 </p>
-                <div className="mt-6 flex flex-wrap justify-center gap-2">
+                <div className="mt-5 flex flex-wrap justify-center gap-2">
                   {[
                     "Summarize my notes",
                     "Explain a concept",
@@ -732,7 +819,7 @@ function ChatPage() {
                         setInputValue(suggestion);
                         inputRef.current?.focus();
                       }}
-                      className="rounded-full border border-border bg-background px-3.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      className="rounded-full border border-border bg-background px-3 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
                     >
                       {suggestion}
                     </button>
@@ -740,10 +827,9 @@ function ChatPage() {
                 </div>
               </div>
             ) : (
-              /* Message list */
-              <div className="mx-auto max-w-2xl px-4 py-6">
+              <div className="mx-auto w-full max-w-3xl space-y-4 xl:max-w-4xl">
                 {showMessagesLoading ? (
-                  <div className="flex items-center justify-center py-20">
+                  <div className="flex items-center justify-center py-16">
                     <HugeiconsIcon
                       icon={Loading03Icon}
                       strokeWidth={2}
@@ -751,50 +837,75 @@ function ChatPage() {
                     />
                   </div>
                 ) : (
-                  <div className="space-y-6">
-                    {chat.messages.map((message, index) => (
+                  <div className="space-y-2">
+                    <AnimatePresence initial={false}>
+                      {chat.messages.map((message, index) => (
                       <ChatMessage
                         key={message.id}
                         message={message}
+                        userAvatarUrl={user?.imageUrl}
+                        shouldAnimate={
+                          isStreaming && newlySeenMessageIds.has(message.id)
+                        }
                         isStreaming={
                           chat.status === "streaming" &&
                           message.role === "assistant" &&
-                          index === chat.messages.length - 1
-                        }
-                      />
-                    ))}
+                            index === chat.messages.length - 1
+                          }
+                        />
+                      ))}
+                    </AnimatePresence>
 
-                    {/* Typing indicator - before first token arrives */}
-                    {chat.status === "submitted" && (
-                      <div className="flex gap-4">
-                        <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                          <HugeiconsIcon
-                            icon={SparklesIcon}
-                            strokeWidth={2}
-                            className="size-3.5 text-primary"
-                          />
-                        </div>
-                        <div className="flex items-center gap-1 pt-1">
-                          <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:0ms]" />
-                          <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:150ms]" />
-                          <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:300ms]" />
-                        </div>
-                      </div>
-                    )}
+                    <AnimatePresence>
+                      {chat.status === "submitted" && (
+                        <motion.div
+                          className="flex items-center gap-2 py-2"
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: 4 }}
+                          transition={{ duration: 0.2 }}
+                        >
+                          <div className="flex size-8 items-center justify-center rounded-full bg-primary/12">
+                            <HugeiconsIcon
+                              icon={SparklesIcon}
+                              strokeWidth={2}
+                              className="size-3.5 text-primary"
+                            />
+                          </div>
+                          <div className="flex items-center gap-1">
+                            {[0, 1, 2].map((i) => (
+                              <motion.span
+                                key={i}
+                                className="size-1.5 rounded-full bg-muted-foreground/55"
+                                animate={{
+                                  y: [0, -3, 0],
+                                  opacity: [0.35, 1, 0.35],
+                                }}
+                                transition={{
+                                  duration: 0.9,
+                                  repeat: Infinity,
+                                  ease: "easeInOut",
+                                  delay: i * 0.12,
+                                }}
+                              />
+                            ))}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 )}
                 <div ref={messagesEndRef} />
               </div>
             )}
 
-            {/* Scroll to bottom button */}
             {showScrollButton && (
-              <div className="sticky bottom-4 flex justify-center">
+              <div className="sticky bottom-3 flex justify-center">
                 <Button
                   variant="outline"
                   size="icon-sm"
                   onClick={scrollToBottom}
-                  className="rounded-full shadow-md"
+                  className="rounded-full bg-background/95"
                 >
                   <HugeiconsIcon
                     icon={ArrowDown01Icon}
@@ -804,12 +915,49 @@ function ChatPage() {
                 </Button>
               </div>
             )}
-          </div>
+            </div>
 
-          {/* ==================== INPUT ==================== */}
-          <div className="border-t border-border bg-background px-4 pb-4 pt-3">
-            <div className="mx-auto max-w-2xl">
-              <div className="relative rounded-xl border border-input bg-background shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30 dark:bg-input/15">
+          <div className="bg-background/90 px-3 pb-3 pt-3 sm:px-4 sm:pb-4 lg:px-6">
+              <div className="mx-auto w-full max-w-3xl xl:max-w-4xl">
+                <div className="chat-composer-shell relative rounded-2xl border border-border/70 bg-background/95 shadow-[0_8px_24px_-18px_rgba(0,0,0,0.5)] transition-all duration-200 focus-within:border-primary/40 focus-within:shadow-[0_14px_30px_-18px_hsl(var(--primary)/0.55)] focus-within:ring-2 focus-within:ring-primary/20">
+                {selectedDocuments.length > 0 && (
+                  <div className="mb-1 flex flex-wrap items-center gap-1 border-b border-border px-3 pt-3 pb-2">
+                    {visibleSelectedDocuments.map((doc) => (
+                      <div
+                        key={doc.id}
+                        className="inline-flex h-6 max-w-[14rem] items-center gap-1 rounded-full bg-muted/45 px-2 text-[0.7rem]"
+                      >
+                        <span className="truncate">{doc.name}</span>
+                        <button
+                          type="button"
+                          className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+                          onClick={() => toggleDocumentScope(doc.id)}
+                          aria-label={`Remove ${doc.name} from context`}
+                        >
+                          <HugeiconsIcon
+                            icon={Cancel01Icon}
+                            strokeWidth={2}
+                            className="size-3"
+                          />
+                        </button>
+                      </div>
+                    ))}
+                    {hiddenSelectedDocumentCount > 0 && (
+                      <Badge variant="outline" className="h-6 text-[0.7rem]">
+                        +{hiddenSelectedDocumentCount}
+                      </Badge>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => setSelectedDocumentIds([])}
+                      className="ml-auto h-6 rounded-md text-[0.68rem] text-muted-foreground"
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                )}
+
                 <textarea
                   ref={inputRef}
                   value={inputValue}
@@ -820,15 +968,42 @@ function ChatPage() {
                       ? "Message Prepify..."
                       : "Start a new conversation..."
                   }
-                  rows={1}
-                  className="block w-full resize-none bg-transparent px-4 pt-3 pb-10 text-sm outline-none placeholder:text-muted-foreground"
+                  rows={3}
+                  className="block w-full resize-none bg-transparent px-5 pt-4 pb-16 text-sm leading-relaxed outline-none placeholder:text-muted-foreground/85"
                   style={
                     {
                       fieldSizing: "content",
-                      maxHeight: "10rem",
+                      maxHeight: "18rem",
                     } as React.CSSProperties
                   }
                 />
+
+                <div className="absolute bottom-2 left-2 flex items-center gap-1">
+                  <Button
+                    variant={
+                      selectedDocumentIds.length > 0 ? "secondary" : "outline"
+                    }
+                    size="xs"
+                    onClick={() => setIsContextDialogOpen(true)}
+                    aria-label="Add document context"
+                  >
+                    <HugeiconsIcon
+                      icon={FileAttachmentIcon}
+                      strokeWidth={2}
+                      className="size-3.5"
+                    />
+                    Context
+                    {selectedDocumentIds.length > 0 && (
+                      <Badge
+                        variant="outline"
+                        className="h-4 px-1 text-[0.62rem]"
+                      >
+                        {selectedDocumentIds.length}
+                      </Badge>
+                    )}
+                  </Button>
+                </div>
+
                 <div className="absolute bottom-2 right-2 flex items-center gap-1">
                   {isStreaming ? (
                     <Button
@@ -836,7 +1011,6 @@ function ChatPage() {
                       size="icon-sm"
                       onClick={() => chat.stop()}
                       title="Stop generating"
-                      className="rounded-lg"
                     >
                       <HugeiconsIcon
                         icon={StopIcon}
@@ -846,11 +1020,10 @@ function ChatPage() {
                     </Button>
                   ) : (
                     <Button
-                      size="icon-sm"
+                      size="icon"
                       onClick={handleSendMessage}
                       disabled={!inputValue.trim()}
                       title="Send message"
-                      className="rounded-lg"
                     >
                       <HugeiconsIcon
                         icon={SentIcon}
@@ -860,13 +1033,139 @@ function ChatPage() {
                     </Button>
                   )}
                 </div>
+                </div>
+                <p className="mt-1 hidden text-center text-[0.65rem] text-muted-foreground/75 sm:block">
+                  AI may produce inaccurate information. Verify important facts.
+                </p>
               </div>
-              <p className="mt-2 text-center text-[0.65rem] text-muted-foreground/60">
-                AI may produce inaccurate information. Verify important facts.
-              </p>
             </div>
           </div>
         </div>
+
+        <Dialog
+          open={isContextDialogOpen}
+          onOpenChange={(open) => {
+            setIsContextDialogOpen(open);
+            if (!open) setContextSearchQuery("");
+          }}
+        >
+          <DialogContent className="max-h-[min(88vh,46rem)] overflow-hidden p-0 sm:max-w-2xl">
+            <DialogHeader className="border-b border-border/70 px-5 pt-5 pb-4">
+              <DialogTitle className="tracking-tight">Add context</DialogTitle>
+              <DialogDescription className="text-xs">
+                Select processed files to scope AI responses for this
+                conversation.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-3 px-5 py-4">
+              <Input
+                ref={contextSearchInputRef}
+                value={contextSearchQuery}
+                onChange={(e) => setContextSearchQuery(e.target.value)}
+                placeholder="Search processed files..."
+                className="h-9 rounded-xl border-border/70 bg-background"
+              />
+
+              {documents.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border/80 bg-muted/30 px-4 py-7 text-center">
+                  <p className="text-sm font-medium">No processed files yet</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Upload documents in the Documents page and wait until
+                    processing completes.
+                  </p>
+                </div>
+              ) : filteredDocuments.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border/80 bg-muted/30 px-4 py-7 text-center">
+                  <p className="text-sm font-medium">No matching files</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Try a different search term.
+                  </p>
+                </div>
+              ) : (
+                <div className="chat-scroll max-h-[22rem] space-y-1 overflow-y-auto pr-1">
+                  {filteredDocuments.map((doc) => {
+                    const isSelected = selectedDocumentIds.includes(doc.id);
+                    return (
+                      <button
+                        key={doc.id}
+                        type="button"
+                        onClick={() => toggleDocumentScope(doc.id)}
+                        className={cn(
+                          "flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left transition-all",
+                          isSelected
+                            ? "border-primary/40 bg-primary/[0.08] shadow-[0_8px_22px_-18px_hsl(var(--primary))]"
+                            : "border-border/70 bg-background hover:border-border hover:bg-muted/40",
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            "flex size-8 items-center justify-center rounded-lg",
+                            isSelected ? "bg-primary/15" : "bg-muted/70",
+                          )}
+                        >
+                          <HugeiconsIcon
+                            icon={FileAttachmentIcon}
+                            strokeWidth={2}
+                            className={cn(
+                              "size-3.5",
+                              isSelected
+                                ? "text-primary"
+                                : "text-muted-foreground",
+                            )}
+                          />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium">
+                            {doc.name}
+                          </p>
+                          <p className="text-[0.68rem] uppercase tracking-[0.12em] text-muted-foreground/75">
+                            {doc.type}
+                          </p>
+                        </div>
+                        {isSelected && (
+                          <Badge
+                            variant="secondary"
+                            className="h-5 rounded-full text-[0.65rem]"
+                          >
+                            Selected
+                          </Badge>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between border-t border-border/70 bg-muted/25 px-5 py-3">
+              <p className="text-xs text-muted-foreground">
+                {selectedDocumentIds.length > 0
+                  ? `${selectedDocumentIds.length} file${selectedDocumentIds.length === 1 ? "" : "s"} selected`
+                  : isContextSearchActive
+                    ? `${filteredDocuments.length} matching file${filteredDocuments.length === 1 ? "" : "s"}`
+                    : `${documents.length} processed file${documents.length === 1 ? "" : "s"} available`}
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSelectedDocumentIds([])}
+                  disabled={selectedDocumentIds.length === 0}
+                >
+                  Clear all
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => setIsContextDialogOpen(false)}
+                  className="rounded-lg"
+                >
+                  Done
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Delete confirmation */}
         <AlertDialog
@@ -930,7 +1229,7 @@ function ConversationItem({
 }) {
   if (isEditing) {
     return (
-      <div className="flex items-center gap-1 rounded-lg bg-accent px-2 py-1.5">
+      <div className="flex items-center gap-1 rounded-lg border border-border bg-muted/40 px-1.5 py-1">
         <Input
           value={editTitle}
           onChange={(e) => setEditTitle(e.target.value)}
@@ -938,7 +1237,7 @@ function ConversationItem({
             if (e.key === "Enter") onSaveEdit();
             else if (e.key === "Escape") onCancelEdit();
           }}
-          className="h-6 flex-1 text-xs"
+          className="h-6 flex-1 border-border/70 bg-background text-xs"
           autoFocus
           onClick={(e) => e.stopPropagation()}
         />
@@ -969,10 +1268,10 @@ function ConversationItem({
   return (
     <div
       className={cn(
-        "group flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors cursor-pointer",
+        "group flex cursor-pointer items-center gap-2 rounded-lg border px-2 py-1.5 text-sm transition-colors",
         isActive
-          ? "bg-accent text-accent-foreground"
-          : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+          ? "border-border bg-accent/60 text-foreground"
+          : "border-transparent text-muted-foreground hover:border-border/70 hover:bg-muted/40 hover:text-foreground",
       )}
       onClick={onSelect}
     >
@@ -1023,51 +1322,86 @@ function ConversationItem({
 
 function ChatMessage({
   message,
+  userAvatarUrl,
+  shouldAnimate = false,
   isStreaming = false,
 }: {
   message: UIMessage;
+  userAvatarUrl?: string;
+  shouldAnimate?: boolean;
   isStreaming?: boolean;
 }) {
   const isUser = message.role === "user";
   const content = getTextContent(message);
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  const showAvatar = isUser && !!userAvatarUrl && !avatarFailed;
 
   return (
-    <div className="flex gap-4">
+    <motion.div
+      className="flex gap-3 py-2.5"
+      layout="position"
+      initial={shouldAnimate ? { opacity: 0, y: 10, scale: 0.995 } : false}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -8 }}
+      transition={
+        shouldAnimate
+          ? {
+              duration: 0.24,
+              ease: [0.22, 1, 0.36, 1],
+            }
+          : { duration: 0 }
+      }
+    >
       {/* Icon */}
       <div
         className={cn(
-          "flex size-7 shrink-0 items-center justify-center rounded-lg mt-0.5",
-          isUser ? "bg-foreground/8" : "bg-primary/10",
+          "mt-0.5 flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-full",
+          isUser ? "bg-muted" : "bg-primary/10",
         )}
       >
-        {isUser ? (
-          <HugeiconsIcon
-            icon={UserIcon}
-            strokeWidth={2}
-            className="size-3.5 text-foreground/70"
+        {showAvatar ? (
+          <img
+            src={userAvatarUrl}
+            alt="Your profile avatar"
+            className="size-full object-cover"
+            onError={() => setAvatarFailed(true)}
           />
         ) : (
-          <HugeiconsIcon
-            icon={SparklesIcon}
-            strokeWidth={2}
-            className="size-3.5 text-primary"
-          />
+          <>
+            {isUser ? (
+              <HugeiconsIcon
+                icon={UserIcon}
+                strokeWidth={2}
+                className="size-3.5 text-foreground/75"
+              />
+            ) : (
+              <HugeiconsIcon
+                icon={SparklesIcon}
+                strokeWidth={2}
+                className="size-3.5 text-primary"
+              />
+            )}
+          </>
         )}
       </div>
 
       {/* Content */}
       <div className="min-w-0 flex-1 pt-0.5">
-        <p className="mb-1 text-xs font-medium text-muted-foreground">
+        <p className="mb-1.5 text-xs font-medium text-muted-foreground">
           {isUser ? "You" : "Prepify AI"}
         </p>
         <div className="text-sm leading-relaxed">
           <MessageContent content={content} />
           {isStreaming && (
-            <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-primary align-text-bottom" />
+            <motion.span
+              className="ml-0.5 inline-block h-4 w-0.5 bg-primary align-text-bottom"
+              animate={{ opacity: [0.25, 1, 0.25] }}
+              transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut" }}
+            />
           )}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
