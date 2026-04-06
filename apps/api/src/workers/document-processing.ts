@@ -1,7 +1,7 @@
 import { Worker, type Job } from "bullmq";
-import { Effect, Schedule } from "effect";
-import { eq } from "drizzle-orm";
-import { embedMany, generateText } from "ai";
+import { Effect, Layer, Schedule } from "effect";
+import { eq, and, isNotNull } from "drizzle-orm";
+import { generateText } from "ai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { db } from "#/db";
 import { documents, documentChunks } from "#/db/schema";
@@ -10,8 +10,14 @@ import { QUEUE_NAMES } from "#/lib/queues";
 import { chunkText, type TextChunk } from "#/lib/chunking";
 import { workerLogger } from "#/lib/logger";
 import { env } from "#/lib/env";
-import { DocumentProcessingError, DatabaseError } from "#/lib/errors";
+import {
+  DocumentProcessingError,
+  DatabaseError,
+  type RateLimitError,
+  type ExternalServiceError,
+} from "#/lib/errors";
 import { LogLayer } from "#/lib/logger";
+import { EmbeddingService, EmbeddingServiceLive } from "#/services/embedding";
 import type { DocumentProcessingJob } from "@repo/shared";
 
 // ============================================
@@ -29,6 +35,12 @@ const google = createGoogleGenerativeAI({
 const transientRetry = Schedule.exponential("2 seconds").pipe(
   Schedule.compose(Schedule.recurs(3)),
 );
+
+// ============================================
+// Worker Layer — EmbeddingService + Logging
+// ============================================
+
+const WorkerLayer = Layer.mergeAll(EmbeddingServiceLive, LogLayer);
 
 // ============================================
 // Pipeline Steps — each is an Effect with tagged errors
@@ -161,6 +173,61 @@ const extractText = (url: string, mimeType: string, documentId: string) =>
     );
   });
 
+// ============================================
+// Checkpoint-aware helpers
+// ============================================
+
+/**
+ * Ensure extracted text is available. If the document already has
+ * `extractedText` persisted (from a previous partial run), skip the
+ * expensive Gemini extraction and return the cached value.
+ */
+const ensureTextExtracted = (doc: {
+  id: string;
+  s3Url: string;
+  mimeType: string | null;
+  extractedText: string | null;
+}) =>
+  Effect.gen(function* () {
+    if (doc.extractedText) {
+      yield* Effect.logInfo(
+        "Using cached extracted text (checkpoint hit)",
+      ).pipe(
+        Effect.annotateLogs("documentId", doc.id),
+        Effect.annotateLogs("textLength", String(doc.extractedText.length)),
+      );
+      return doc.extractedText;
+    }
+
+    // Extract text fresh
+    const text = yield* extractText(
+      doc.s3Url,
+      doc.mimeType || "application/octet-stream",
+      doc.id,
+    );
+
+    // Persist to DB as checkpoint
+    yield* Effect.tryPromise({
+      try: () =>
+        db
+          .update(documents)
+          .set({ extractedText: text, updatedAt: new Date() })
+          .where(eq(documents.id, doc.id)),
+      catch: (cause) =>
+        new DatabaseError({
+          message: "Failed to persist extractedText checkpoint",
+          cause,
+        }),
+    });
+
+    yield* Effect.logInfo("Text extracted and checkpointed").pipe(
+      Effect.annotateLogs("documentId", doc.id),
+      Effect.annotateLogs("textLength", String(text.length)),
+    );
+
+    return text;
+  });
+
 /** Step 4: Chunk the extracted text */
 const chunkExtractedText = (text: string, documentId: string) =>
   Effect.gen(function* () {
@@ -192,63 +259,90 @@ const chunkExtractedText = (text: string, documentId: string) =>
     return chunks;
   });
 
-/** Step 5: Generate embeddings for chunk texts (batched, with retry) */
-const generateEmbeddings = (chunks: TextChunk[], documentId: string) =>
-  Effect.gen(function* () {
-    const texts = chunks.map((c) => c.content);
-    if (texts.length === 0) return [] as number[][];
-
-    const EMBED_BATCH_SIZE = 100;
-    const allEmbeddings: number[][] = [];
-
-    for (let i = 0; i < texts.length; i += EMBED_BATCH_SIZE) {
-      const batch = texts.slice(i, i + EMBED_BATCH_SIZE);
-      const batchNum = Math.floor(i / EMBED_BATCH_SIZE) + 1;
-      const totalBatches = Math.ceil(texts.length / EMBED_BATCH_SIZE);
-
-      yield* Effect.logDebug(
-        `Embedding batch ${batchNum}/${totalBatches}`,
-      ).pipe(
-        Effect.annotateLogs("documentId", documentId),
-        Effect.annotateLogs("batchSize", String(batch.length)),
-      );
-
-      const embeddings = yield* Effect.tryPromise({
-        try: async () => {
-          const { embeddings } = await embedMany({
-            model: google.embeddingModel("gemini-embedding-001"),
-            values: batch,
-            providerOptions: {
-              google: { outputDimensionality: 768 },
-            },
-          });
-          return embeddings;
-        },
-        catch: (cause) =>
-          new DocumentProcessingError({
-            documentId,
-            message: `Embedding generation failed (batch ${batchNum})`,
-            cause,
-          }),
-      }).pipe(Effect.retry(transientRetry));
-
-      allEmbeddings.push(...embeddings);
-    }
-
-    return allEmbeddings;
+/**
+ * Fetch existing chunk indices that already have embeddings in the DB.
+ * Used to skip re-embedding on retry.
+ */
+const fetchExistingChunkIndices = (documentId: string) =>
+  Effect.tryPromise({
+    try: async () => {
+      const rows = await db
+        .select({ chunkIndex: documentChunks.chunkIndex })
+        .from(documentChunks)
+        .where(
+          and(
+            eq(documentChunks.documentId, documentId),
+            isNotNull(documentChunks.embedding),
+          ),
+        );
+      return new Set(rows.map((r) => r.chunkIndex));
+    },
+    catch: (cause) =>
+      new DatabaseError({
+        message: "Failed to fetch existing chunk indices",
+        cause,
+      }),
   });
 
-/** Step 6: Store chunks with embeddings in DB (batched inserts) */
-const storeChunks = (
+/**
+ * Ensure all chunks have embeddings. On retry, only embeds chunks that
+ * are missing from the DB, avoiding redundant API calls.
+ *
+ * Returns the full set of chunks and their embeddings (existing + new).
+ */
+const ensureChunksEmbedded = (documentId: string, chunks: TextChunk[]) =>
+  Effect.gen(function* () {
+    const embeddingService = yield* EmbeddingService;
+    const existingIndices = yield* fetchExistingChunkIndices(documentId);
+
+    // Partition chunks into already-embedded vs missing
+    const missingChunks = chunks.filter(
+      (c) => !existingIndices.has(c.chunkIndex),
+    );
+
+    if (missingChunks.length === 0) {
+      yield* Effect.logInfo(
+        "All chunks already embedded (checkpoint hit)",
+      ).pipe(
+        Effect.annotateLogs("documentId", documentId),
+        Effect.annotateLogs("totalChunks", String(chunks.length)),
+      );
+      return {
+        missingChunks: [] as TextChunk[],
+        newEmbeddings: [] as number[][],
+      };
+    }
+
+    yield* Effect.logInfo(
+      `Embedding ${missingChunks.length}/${chunks.length} chunks (${existingIndices.size} already done)`,
+    ).pipe(Effect.annotateLogs("documentId", documentId));
+
+    const missingTexts = missingChunks.map((c) => c.content);
+
+    // Use EmbeddingService which handles rate limiting internally
+    const newEmbeddings = yield* embeddingService.embedAll(missingTexts);
+
+    yield* Effect.logInfo("Embeddings generated").pipe(
+      Effect.annotateLogs("documentId", documentId),
+      Effect.annotateLogs("newEmbeddings", String(newEmbeddings.length)),
+    );
+
+    return { missingChunks, newEmbeddings };
+  });
+
+/** Store only the newly-embedded chunks in DB (batched inserts) */
+const storeNewChunks = (
   documentId: string,
-  chunks: TextChunk[],
-  embeddings: number[][],
+  missingChunks: TextChunk[],
+  newEmbeddings: number[][],
 ) =>
   Effect.gen(function* () {
-    const chunkRecords = chunks.map((chunk, i) => ({
+    if (missingChunks.length === 0) return;
+
+    const chunkRecords = missingChunks.map((chunk, i) => ({
       documentId,
       content: chunk.content,
-      embedding: embeddings[i] ?? null,
+      embedding: newEmbeddings[i] ?? null,
       chunkIndex: chunk.chunkIndex,
       metadata: chunk.metadata as Record<string, unknown>,
     }));
@@ -266,15 +360,22 @@ const storeChunks = (
       });
     }
 
-    yield* Effect.logDebug("Chunks stored in DB").pipe(
+    yield* Effect.logDebug("New chunks stored in DB").pipe(
       Effect.annotateLogs("documentId", documentId),
-      Effect.annotateLogs("totalChunks", String(chunkRecords.length)),
+      Effect.annotateLogs("storedChunks", String(chunkRecords.length)),
     );
   });
 
 // ============================================
-// Main processing pipeline
+// Main processing pipeline (checkpoint-aware)
 // ============================================
+//
+// On retry (BullMQ attempts > 1), the pipeline:
+// - Re-fetches the document (cheap DB read)
+// - SKIPS text extraction if extractedText is already persisted
+// - Re-derives chunks (deterministic, CPU-only, fast)
+// - SKIPS embedding for chunks that already exist in document_chunks with embeddings
+// - Only stores newly-embedded chunks
 
 const processDocument = (
   documentId: string,
@@ -299,12 +400,8 @@ const processDocument = (
         }),
     });
 
-    // 3. Extract text
-    const extractedText = yield* extractText(
-      doc.s3Url,
-      doc.mimeType || "application/octet-stream",
-      documentId,
-    );
+    // 3. Extract text (checkpoint-aware: skips if already persisted)
+    const extractedText = yield* ensureTextExtracted(doc);
     yield* Effect.tryPromise({
       try: () => reportProgress(40),
       catch: () =>
@@ -314,12 +411,7 @@ const processDocument = (
         }),
     });
 
-    yield* Effect.logInfo("Text extracted").pipe(
-      Effect.annotateLogs("documentId", documentId),
-      Effect.annotateLogs("textLength", String(extractedText.length)),
-    );
-
-    // 4. Chunk the text
+    // 4. Chunk the text (always re-derive — fast and deterministic)
     const chunks = yield* chunkExtractedText(extractedText, documentId);
     yield* Effect.tryPromise({
       try: () => reportProgress(50),
@@ -330,8 +422,11 @@ const processDocument = (
         }),
     });
 
-    // 5. Generate embeddings
-    const embeddings = yield* generateEmbeddings(chunks, documentId);
+    // 5. Generate embeddings (checkpoint-aware: skips already-embedded chunks)
+    const { missingChunks, newEmbeddings } = yield* ensureChunksEmbedded(
+      documentId,
+      chunks,
+    );
     yield* Effect.tryPromise({
       try: () => reportProgress(80),
       catch: () =>
@@ -341,13 +436,8 @@ const processDocument = (
         }),
     });
 
-    yield* Effect.logInfo("Embeddings generated").pipe(
-      Effect.annotateLogs("documentId", documentId),
-      Effect.annotateLogs("embeddingCount", String(embeddings.length)),
-    );
-
-    // 6. Store chunks in DB
-    yield* storeChunks(documentId, chunks, embeddings);
+    // 6. Store only newly-embedded chunks in DB
+    yield* storeNewChunks(documentId, missingChunks, newEmbeddings);
     yield* Effect.tryPromise({
       try: () => reportProgress(95),
       catch: () =>
@@ -373,9 +463,10 @@ const processDocument = (
     yield* Effect.logInfo("Document processed successfully").pipe(
       Effect.annotateLogs("documentId", documentId),
       Effect.annotateLogs("chunks", String(chunks.length)),
+      Effect.annotateLogs("newlyEmbedded", String(missingChunks.length)),
     );
 
-    return { chunks: chunks.length };
+    return { chunks: chunks.length, newlyEmbedded: missingChunks.length };
   }).pipe(
     // On any failure, try to mark the document as failed in the DB
     Effect.tapError((error) =>
@@ -404,7 +495,7 @@ const worker = new Worker<DocumentProcessingJob>(
 
     return Effect.runPromise(
       processDocument(documentId, (pct) => job.updateProgress(pct)).pipe(
-        Effect.provide(LogLayer),
+        Effect.provide(WorkerLayer),
       ),
     );
   },
