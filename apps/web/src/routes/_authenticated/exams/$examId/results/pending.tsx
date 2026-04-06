@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -8,7 +8,6 @@ import {
   RefreshIcon,
   SparklesIcon,
 } from "@hugeicons/core-free-icons";
-import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import {
   Card,
@@ -75,19 +74,6 @@ function ExamResultsPendingPage() {
   const isComplete =
     gradingState?.status === "complete" || resultsReadyQuery.data === true;
   const isFailed = gradingState?.status === "failed";
-
-  const progressValue = useMemo(() => {
-    if (gradingState?.total && gradingState.total > 0) {
-      return Math.min(
-        100,
-        Math.round((gradingState.current / gradingState.total) * 100),
-      );
-    }
-    if (gradingState?.status === "started") return 12;
-    if (gradingState?.status === "in_progress") return 68;
-    if (resultsReadyQuery.isFetching) return 84;
-    return 20;
-  }, [gradingState, resultsReadyQuery.isFetching]);
 
   useEffect(() => {
     if (!resolvedSessionId || !isComplete) return;
@@ -166,22 +152,12 @@ function ExamResultsPendingPage() {
   }
 
   return (
-    <div className="relative isolate flex min-h-[calc(100vh-6rem)] items-center justify-center overflow-hidden px-4 py-10">
+    <div className="mx-auto flex min-h-[70vh] max-w-4xl items-center justify-center px-4 py-10">
       <title>Evaluating exam - Prepify</title>
 
-      <div className="absolute inset-0 -z-20 bg-[radial-gradient(circle_at_top_left,rgba(249,115,22,0.12),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(56,189,248,0.12),transparent_28%),linear-gradient(to_bottom_right,rgba(248,250,252,0.9),rgba(255,255,255,0.55))] dark:bg-[radial-gradient(circle_at_top_left,rgba(249,115,22,0.16),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(56,189,248,0.14),transparent_26%),linear-gradient(to_bottom_right,rgba(2,6,23,0.9),rgba(15,23,42,0.75))]" />
-      <div className="absolute inset-0 -z-10 overflow-hidden">
-        <div className="animate-pending-bg-1 absolute -left-24 top-0 size-80 rounded-full bg-primary/10 blur-3xl" />
-        <div className="animate-pending-bg-2 absolute -right-16 bottom-0 size-96 rounded-full bg-sky-400/10 blur-3xl" />
-      </div>
-
-      <div className="w-full max-w-4xl overflow-hidden rounded-[2rem] border border-border/70 bg-card/90 shadow-[0_24px_80px_-40px_rgba(15,23,42,0.45)] backdrop-blur">
+      <div className="w-full overflow-hidden rounded-[2rem] border border-border/70 bg-card shadow-sm">
         <div className="grid gap-0 lg:grid-cols-[1.2fr_0.8fr]">
-          <section className="border-b border-border/60 bg-gradient-to-br from-slate-50 via-background to-amber-50/50 p-8 lg:border-b-0 lg:border-r dark:from-slate-950 dark:via-background dark:to-amber-950/10">
-            <Badge className="rounded-full border border-primary/20 bg-primary/10 text-primary">
-              AI evaluation in progress
-            </Badge>
-
+          <section className="border-b border-border/60 p-8 lg:border-b-0 lg:border-r">
             <h1 className="mt-6 text-4xl font-semibold tracking-tight">
               Your exam is being reviewed
             </h1>
@@ -203,19 +179,6 @@ function ExamResultsPendingPage() {
                 <p className="mt-1 text-sm text-muted-foreground">
                   Session {resolvedSessionId || "loading"}
                 </p>
-              </div>
-            </div>
-
-            <div className="mt-8 space-y-3">
-              <div className="flex items-center justify-between text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">
-                <span>Progress</span>
-                <span>{progressValue}%</span>
-              </div>
-              <div className="h-3 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-primary via-amber-400 to-sky-400 transition-all duration-700"
-                  style={{ width: `${progressValue}%` }}
-                />
               </div>
             </div>
           </section>

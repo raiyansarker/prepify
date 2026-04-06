@@ -33,9 +33,18 @@ type ResultData = {
   };
   answers: {
     id: string;
+    questionId: string;
     userAnswer: string | null;
+    extractedText: string | null;
     isCorrect: boolean | null;
     score: number | null;
+    aiGrading: {
+      score: number;
+      maxScore: number;
+      feedback: string;
+      strengths: string[];
+      weaknesses: string[];
+    } | null;
     question: {
       id: string;
       type: "mcq" | "descriptive";
@@ -353,6 +362,28 @@ function ExamResultsPage() {
                 />
               </div>
 
+              {item.question.type === "descriptive" && item.aiGrading ? (
+                <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                  <AnswerPanel label="AI feedback" value={item.aiGrading.feedback} />
+                  <AnswerPanel
+                    label="Strengths"
+                    value={
+                      item.aiGrading.strengths.length > 0
+                        ? item.aiGrading.strengths.join(", ")
+                        : "No specific strengths noted"
+                    }
+                  />
+                  <AnswerPanel
+                    label="Weaknesses"
+                    value={
+                      item.aiGrading.weaknesses.length > 0
+                        ? item.aiGrading.weaknesses.join(", ")
+                        : "No specific weaknesses noted"
+                    }
+                  />
+                </div>
+              ) : null}
+
               {item.question.explanation ? (
                 <div className="mt-4 rounded-2xl border border-border/60 bg-muted/40 p-4">
                   <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
@@ -439,7 +470,9 @@ function AnswerPanel({ label, value }: { label: string; value: string }) {
       <p className="text-xs font-medium uppercase tracking-[0.2em] text-muted-foreground">
         {label}
       </p>
-      <p className="mt-2 text-sm leading-7 text-foreground/85">{value}</p>
+      <p className="mt-2 text-sm leading-7 text-foreground/85 whitespace-pre-wrap">
+        {value}
+      </p>
     </div>
   );
 }
