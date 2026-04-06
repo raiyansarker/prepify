@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { Button } from "#/components/ui/button";
 import {
   Dialog,
@@ -26,49 +27,44 @@ export function CreateFolderDialog({
   onFolderCreated,
 }: CreateFolderDialogProps) {
   const [name, setName] = useState("");
-  const [isCreating, setIsCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  const handleCreate = useCallback(async () => {
-    if (!name.trim()) {
-      setError("Folder name is required");
-      return;
-    }
-
-    setIsCreating(true);
-    setError(null);
-
-    try {
-      const { error: apiError } = await api.folders.post({
-        name: name.trim(),
-        parentId: parentId || undefined,
+  const createFolderMutation = useMutation({
+    mutationFn: async ({
+      name,
+      parentId,
+    }: {
+      name: string;
+      parentId?: string;
+    }) => {
+      const { data, error } = await api.folders.post({
+        name,
+        parentId,
       });
-
-      if (apiError) {
-        setError("Failed to create folder");
-        return;
-      }
-
+      if (error) throw new Error("Failed to create folder");
+      return data;
+    },
+    onSuccess: () => {
       setName("");
       onFolderCreated();
       onOpenChange(false);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to create folder";
-      console.error("Failed to create folder:", err);
-      setError(message);
-    } finally {
-      setIsCreating(false);
-    }
-  }, [name, parentId, onFolderCreated, onOpenChange]);
+    },
+  });
+
+  const handleCreate = useCallback(() => {
+    if (!name.trim()) return;
+    createFolderMutation.mutate({
+      name: name.trim(),
+      parentId: parentId || undefined,
+    });
+  }, [name, parentId, createFolderMutation]);
 
   const handleClose = useCallback(() => {
-    if (!isCreating) {
+    if (!createFolderMutation.isPending) {
       setName("");
-      setError(null);
+      createFolderMutation.reset();
       onOpenChange(false);
     }
-  }, [isCreating, onOpenChange]);
+  }, [createFolderMutation, onOpenChange]);
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -87,7 +83,7 @@ export function CreateFolderDialog({
             value={name}
             onChange={(e) => {
               setName(e.target.value);
-              setError(null);
+              if (createFolderMutation.isError) createFolderMutation.reset();
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") handleCreate();
@@ -95,15 +91,26 @@ export function CreateFolderDialog({
             placeholder="My Study Materials"
             autoFocus
           />
-          {error && <p className="text-xs text-destructive">{error}</p>}
+          {createFolderMutation.isError && (
+            <p className="text-xs text-destructive">
+              {createFolderMutation.error.message}
+            </p>
+          )}
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={handleClose} disabled={isCreating}>
+          <Button
+            variant="outline"
+            onClick={handleClose}
+            disabled={createFolderMutation.isPending}
+          >
             Cancel
           </Button>
-          <Button onClick={handleCreate} disabled={isCreating || !name.trim()}>
-            {isCreating ? "Creating..." : "Create"}
+          <Button
+            onClick={handleCreate}
+            disabled={createFolderMutation.isPending || !name.trim()}
+          >
+            {createFolderMutation.isPending ? "Creating..." : "Create"}
           </Button>
         </DialogFooter>
       </DialogContent>
