@@ -8,9 +8,12 @@ import viteReact from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 const config = defineConfig({
-  preview: {
-    host: true, // listen on all interfaces
-    allowedHosts: true, // ✅ allow ALL hosts
+  // preview: {
+  //   host: true, // listen on all interfaces
+  //   allowedHosts: true, // ✅ allow ALL hosts
+  // },
+  server: {
+    allowedHosts: true,
   },
   plugins: [
     devtools(),
