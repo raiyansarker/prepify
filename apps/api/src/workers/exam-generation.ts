@@ -9,7 +9,7 @@ import { redisConnection } from "#/lib/redis";
 import { QUEUE_NAMES } from "#/lib/queues";
 import { workerLogger, LogLayer } from "#/lib/logger";
 import { env } from "#/lib/env";
-import { KIMI_K2_MODEL } from "#/services/ai";
+import { STRUCTURED_GEN_MODEL } from "#/services/ai";
 import { DatabaseError, AiGenerationError, ExamError } from "#/lib/errors";
 import { findSimilarChunks, buildContextFromChunks } from "#/lib/similarity";
 import {
@@ -209,7 +209,7 @@ const generateQuestions = (
 ) =>
   Effect.tryPromise({
     try: async () => {
-      const model = groq(KIMI_K2_MODEL);
+      const model = groq(STRUCTURED_GEN_MODEL);
 
       if (examType === "mcq") {
         const { object } = await generateObject({
@@ -408,7 +408,7 @@ const processExamGeneration = (
     // 5. Call AI for structured question generation
     yield* Effect.logInfo("Calling AI for question generation").pipe(
       Effect.annotateLogs("examId", examId),
-      Effect.annotateLogs("model", KIMI_K2_MODEL),
+      Effect.annotateLogs("model", STRUCTURED_GEN_MODEL),
       Effect.annotateLogs("examType", exam.type),
       Effect.annotateLogs("questionCount", String(exam.questionCount)),
     );

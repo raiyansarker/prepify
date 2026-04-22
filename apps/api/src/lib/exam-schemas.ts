@@ -5,7 +5,7 @@ import { MCQ_OPTIONS_COUNT } from "@repo/shared";
 // Zod schemas for AI structured output
 // ============================================
 // Used with Vercel AI SDK `generateObject()` to get
-// type-safe, validated responses from Kimi K2 via Groq.
+// type-safe, validated responses from the structured generation model.
 
 // ============================================
 // MCQ Question Schema

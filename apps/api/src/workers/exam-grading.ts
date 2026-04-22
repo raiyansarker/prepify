@@ -10,7 +10,7 @@ import { redisConnection } from "#/lib/redis";
 import { QUEUE_NAMES } from "#/lib/queues";
 import { workerLogger, LogLayer } from "#/lib/logger";
 import { env } from "#/lib/env";
-import { KIMI_K2_MODEL } from "#/services/ai";
+import { STRUCTURED_GEN_MODEL } from "#/services/ai";
 import { DatabaseError, AiGenerationError } from "#/lib/errors";
 import {
   aiGradingResultSchema,
@@ -167,7 +167,7 @@ const extractTextFromAttachment = (
       }),
   }).pipe(Effect.retry(transientRetry));
 
-/** Step 3: Grade a single descriptive answer using Kimi K2 */
+/** Step 3: Grade a single descriptive answer using the structured generation model */
 const gradeDescriptiveAnswer = (
   questionContent: string,
   correctAnswer: string,
@@ -177,7 +177,7 @@ const gradeDescriptiveAnswer = (
 ) =>
   Effect.tryPromise({
     try: async () => {
-      const model = groq(KIMI_K2_MODEL);
+      const model = groq(STRUCTURED_GEN_MODEL);
 
       const { object } = await generateObject({
         model,
@@ -235,7 +235,7 @@ const generateOverallFeedback = (
 ) =>
   Effect.tryPromise({
     try: async () => {
-      const model = groq(KIMI_K2_MODEL);
+      const model = groq(STRUCTURED_GEN_MODEL);
 
       const summaryText = gradingSummaries
         .map(

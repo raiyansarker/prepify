@@ -59,7 +59,7 @@ At a high level, the platform turns uploaded learning content into interactive s
 
 The codebase uses different models for different kinds of AI work rather than a single model for everything.
 
-### `moonshotai/kimi-k2-instruct-0905` via Groq
+### `openai/gpt-oss-120b` via Groq
 - This is the main structured generation and evaluation model.
 - It is used for:
   - exam question generation,
@@ -92,7 +92,7 @@ The codebase uses different models for different kinds of AI work rather than a 
 - `Gemini 2.5 Flash`: image-to-text extraction.
 - `BAAI/bge-large-en-v1.5`: embeddings and retrieval.
 - `Llama 4 Scout`: conversational study chat.
-- `Kimi K2`: structured generation, grading, and flashcard/exam content creation.
+- `GPT OSS`: structured generation, grading, and flashcard/exam content creation.
 
 ## Core System Flow
 

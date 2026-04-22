@@ -14,7 +14,7 @@ import { redisConnection } from "#/lib/redis";
 import { QUEUE_NAMES } from "#/lib/queues";
 import { workerLogger, LogLayer } from "#/lib/logger";
 import { env } from "#/lib/env";
-import { KIMI_K2_MODEL } from "#/services/ai";
+import { STRUCTURED_GEN_MODEL } from "#/services/ai";
 import { AiGenerationError, DatabaseError, ValidationError } from "#/lib/errors";
 import {
   flashcardGenerationResponseSchema,
@@ -143,7 +143,7 @@ const generateFlashcards = (topic: string, context: string) =>
   Effect.tryPromise({
     try: async () => {
       const { object } = await generateObject({
-        model: groq(KIMI_K2_MODEL),
+        model: groq(STRUCTURED_GEN_MODEL),
         schema: flashcardGenerationResponseSchema,
         prompt: `You are an expert flashcard generator for the study platform Prepify.
 
