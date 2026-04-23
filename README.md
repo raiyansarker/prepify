@@ -1,159 +1,113 @@
-# Turborepo starter
+# Prepify
 
-This Turborepo starter is maintained by the Turborepo core team.
+Prepify is an AI-powered study platform designed to help students prepare for exams more efficiently. It features automated document processing, exam generation, flashcard creation, and an AI-powered chat interface.
 
-## Using this example
+## Tech Stack
 
-Run the following command:
+- **Monorepo:** [Turborepo](https://turbo.build/repo)
+- **Runtime:** [Bun](https://bun.sh/)
+- **Frontend:** [React](https://react.dev/), [Vite](https://vitejs.dev/), [TanStack Router](https://tanstack.com/router)
+- **API:** [ElysiaJS](https://elysiajs.com/), [Drizzle ORM](https://orm.drizzle.team/)
+- **Database:** [PostgreSQL](https://www.postgresql.org/)
+- **Queue/Workers:** [Redis](https://redis.io/), [BullMQ](https://docs.bullmq.io/)
+- **Auth:** [Clerk](https://clerk.com/)
+- **AI/LLMs:** [Groq](https://groq.com/), [Google Gemini](https://ai.google.dev/)
+- **Storage:** [Cloudflare R2](https://www.cloudflare.com/developer-platform/r2/)
 
-```sh
-npx create-turbo@latest
+## Prerequisites
+
+- [Bun](https://bun.sh/docs/installation) (recommended)
+- [PostgreSQL](https://www.postgresql.org/download/)
+- [Redis](https://redis.io/download/)
+
+## Setup
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/your-username/prepify.git
+cd prepify
 ```
 
-## What's inside?
+### 2. Install dependencies
 
-This Turborepo includes the following packages/apps:
-
-### Apps and Packages
-
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/eslint-config`: `eslint` configurations (includes `eslint-config-next` and `eslint-config-prettier`)
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
-
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
-
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [ESLint](https://eslint.org/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo build
+```bash
+bun install
 ```
 
-Without global `turbo`, use your package manager:
+### 3. Environment Variables
 
-```sh
-cd my-turborepo
-npx turbo build
-yarn dlx turbo build
-pnpm exec turbo build
+Copy the `.env.example` files to `.env` in both the `apps/api` and `apps/web` directories.
+
+#### API (`apps/api/.env`)
+
+```bash
+cp apps/api/.env.example apps/api/.env
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+You'll need to fill in:
+- `DATABASE_URL`: Your PostgreSQL connection string.
+- `CLERK_SECRET_KEY` & `CLERK_PUBLISHABLE_KEY`: From your [Clerk Dashboard](https://dashboard.clerk.com/).
+- `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, etc.: For Cloudflare R2 storage.
+- `GROQ_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`: For AI features.
+- `REDIS_URL`: Your Redis connection string.
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+#### Web (`apps/web/.env`)
 
-```sh
-turbo build --filter=docs
+```bash
+cp apps/web/.env.example apps/web/.env
 ```
 
-Without global `turbo`:
+- `VITE_CLERK_PUBLISHABLE_KEY`: Must match the API key.
+- `VITE_API_URL`: Should point to `http://localhost:3001` for local development.
 
-```sh
-npx turbo build --filter=docs
-yarn exec turbo build --filter=docs
-pnpm exec turbo build --filter=docs
+### 4. Database Setup
+
+Run the following command from the root to push the schema to your database:
+
+```bash
+bun run db:push
 ```
 
-### Develop
+### 5. Start Development Servers
 
-To develop all apps and packages, run the following command:
+You'll need to start both the main applications and the background workers.
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
+In one terminal, start the frontend and API:
 
-```sh
-cd my-turborepo
-turbo dev
+```bash
+bun run dev
 ```
 
-Without global `turbo`, use your package manager:
+This will start:
+- Frontend at `http://localhost:3000`
+- API at `http://localhost:3001`
 
-```sh
-cd my-turborepo
-npx turbo dev
-yarn exec turbo dev
-pnpm exec turbo dev
+In a second terminal, start the background workers:
+
+```bash
+bun run worker:dev
 ```
 
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+## Project Structure
 
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
+- `apps/api`: ElysiaJS backend with BullMQ workers and Drizzle ORM.
+- `apps/web`: React frontend using TanStack Router and Vite.
+- `packages/shared`: Shared types and constants.
+- `packages/ui`: Shared React components (not used by all apps yet).
+- `packages/typescript-config`: Shared `tsconfig.json`s.
+- `packages/eslint-config`: Shared ESLint configurations.
 
-```sh
-turbo dev --filter=web
-```
+## Useful Commands
 
-Without global `turbo`:
+- `bun run dev`: Start all apps in development mode.
+- `bun run build`: Build all apps and packages.
+- `bun run lint`: Lint all packages.
+- `bun run check-types`: Run TypeScript type checking.
+- `bun run db:studio`: Open Drizzle Studio to inspect your database.
 
-```sh
-npx turbo dev --filter=web
-yarn exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
-```
+## Troubleshooting
 
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended):
-
-```sh
-cd my-turborepo
-turbo login
-```
-
-Without global `turbo`, use your package manager:
-
-```sh
-cd my-turborepo
-npx turbo login
-yarn exec turbo login
-pnpm exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed:
-
-```sh
-turbo link
-```
-
-Without global `turbo`:
-
-```sh
-npx turbo link
-yarn exec turbo link
-pnpm exec turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+- **Redis Connection:** Ensure Redis is running and reachable via the `REDIS_URL`.
+- **Clerk Auth:** If you're having issues with authentication, double-check your Clerk keys and ensure the `FRONTEND_URL` in the API env matches your web app URL.
+- **AI Generation:** Ensure you have provided a valid API key for either Groq or Google Gemini.
